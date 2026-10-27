@@ -6,7 +6,7 @@ import (
 
 	"github.com/charmbracelet/x/ansi"
 
-	"mkd/internal/config"
+	"github.com/Yak036/mkd/internal/config"
 )
 
 // ContextFile representa un archivo anclado a la sesión con su hash SHA-256

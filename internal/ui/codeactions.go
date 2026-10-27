@@ -11,7 +11,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/x/ansi"
 
-	"mkd/internal/clipboard"
+	"github.com/Yak036/mkd/internal/clipboard"
 )
 
 // ---------------------------------------------------------------------------

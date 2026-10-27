@@ -26,8 +26,8 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/x/ansi"
 
-	"mkd/internal/config"
-	"mkd/internal/mcp"
+	"github.com/Yak036/mkd/internal/config"
+	"github.com/Yak036/mkd/internal/mcp"
 )
 
 // mcpConnectTimeout acota el arranque bajo demanda de un servidor MCP.

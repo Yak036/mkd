@@ -9,8 +9,8 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
 
-	"mkd/internal/agent"
-	"mkd/internal/swarm"
+	"github.com/Yak036/mkd/internal/agent"
+	"github.com/Yak036/mkd/internal/swarm"
 )
 
 // Colores del diff: verde neón para añadidos, rojo para eliminados.

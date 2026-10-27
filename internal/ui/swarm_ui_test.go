@@ -8,9 +8,9 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"mkd/internal/ai"
-	"mkd/internal/config"
-	"mkd/internal/swarm"
+	"github.com/Yak036/mkd/internal/ai"
+	"github.com/Yak036/mkd/internal/config"
+	"github.com/Yak036/mkd/internal/swarm"
 )
 
 // asModel fuerza la conversión tea.Model → Model en tests.

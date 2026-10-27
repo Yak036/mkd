@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	mkdcontext "mkd/internal/context"
+	mkdcontext "github.com/Yak036/mkd/internal/context"
 )
 
 func TestMentionQueryAt(t *testing.T) {

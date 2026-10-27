@@ -10,7 +10,7 @@ import (
 
 	openai "github.com/sashabaranov/go-openai"
 
-	"mkd/internal/config"
+	"github.com/Yak036/mkd/internal/config"
 )
 
 // Manager orquesta varios servidores MCP y traduce sus herramientas al

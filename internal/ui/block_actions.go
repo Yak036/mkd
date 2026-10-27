@@ -5,7 +5,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"mkd/internal/config"
+	"github.com/Yak036/mkd/internal/config"
 )
 
 // copyLastBlock implementa Ctrl+Y / /copy: extrae el último bloque de código

@@ -9,7 +9,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"mkd/internal/storage"
+	"github.com/Yak036/mkd/internal/storage"
 )
 
 // TestModelsAutoSyncWithoutCache: al abrir el modal de modelos con API key pero

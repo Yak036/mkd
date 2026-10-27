@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"mkd/internal/ai"
+	"github.com/Yak036/mkd/internal/ai"
 )
 
 func TestCompactSplitKeepsRecent(t *testing.T) {

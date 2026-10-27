@@ -23,7 +23,7 @@ import (
 
 	openai "github.com/sashabaranov/go-openai"
 
-	"mkd/internal/config"
+	"github.com/Yak036/mkd/internal/config"
 )
 
 // ErrNotConfigured se devuelve cuando falta proveedor, credenciales o modelo.

@@ -26,8 +26,8 @@ import (
 
 	openai "github.com/sashabaranov/go-openai"
 
-	"mkd/internal/ai"
-	"mkd/internal/rules"
+	"github.com/Yak036/mkd/internal/ai"
+	"github.com/Yak036/mkd/internal/rules"
 )
 
 // ContextDocName es el archivo que se anexa al system prompt si existe en el

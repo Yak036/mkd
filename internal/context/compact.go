@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"mkd/internal/ai"
+	"github.com/Yak036/mkd/internal/ai"
 )
 
 const (

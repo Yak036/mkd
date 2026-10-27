@@ -14,9 +14,9 @@ import (
 	"github.com/charmbracelet/x/ansi"
 	"github.com/charmbracelet/x/cellbuf"
 
-	"mkd/internal/ai"
-	"mkd/internal/config"
-	"mkd/internal/storage"
+	"github.com/Yak036/mkd/internal/ai"
+	"github.com/Yak036/mkd/internal/config"
+	"github.com/Yak036/mkd/internal/storage"
 )
 
 type modalKind int

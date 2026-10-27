@@ -9,8 +9,8 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"mkd/internal/ai"
-	"mkd/internal/config"
+	"github.com/Yak036/mkd/internal/ai"
+	"github.com/Yak036/mkd/internal/config"
 )
 
 type captureWriter struct {

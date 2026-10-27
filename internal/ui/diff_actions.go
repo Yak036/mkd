@@ -3,7 +3,7 @@ package ui
 import (
 	tea "github.com/charmbracelet/bubbletea"
 
-	"mkd/internal/agent"
+	"github.com/Yak036/mkd/internal/agent"
 )
 
 // updateAgentDiffKey traduce Y/N/A del modal HITL en acciones del bucle de

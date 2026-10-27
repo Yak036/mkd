@@ -17,7 +17,7 @@ import (
 	"sort"
 	"strings"
 
-	"mkd/internal/skills"
+	"github.com/Yak036/mkd/internal/skills"
 )
 
 // skillsDir devuelve la carpeta efectiva de skills.

@@ -97,7 +97,7 @@ func (i Info) Short() string { return "mkd " + i.Version }
 
 // UserAgent identifica la petición ante los proveedores de IA.
 func (i Info) UserAgent() string {
-	value := "mkd/" + strings.TrimPrefix(i.Version, "v")
+	value := "github.com/Yak036/mkd/" + strings.TrimPrefix(i.Version, "v")
 	return value
 }
 

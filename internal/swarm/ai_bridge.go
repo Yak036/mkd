@@ -7,8 +7,8 @@ package swarm
 // Mantener esta dependencia aislada deja el orquestador testeable sin red.
 
 import (
-	"mkd/internal/ai"
-	"mkd/internal/config"
+	"github.com/Yak036/mkd/internal/ai"
+	"github.com/Yak036/mkd/internal/config"
 )
 
 // compile-time: el cliente real cumple el contrato del sub-agente.

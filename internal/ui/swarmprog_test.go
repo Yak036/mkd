@@ -6,9 +6,9 @@ import (
 	"testing"
 	"time"
 
-	"mkd/internal/ai"
-	"mkd/internal/config"
-	"mkd/internal/swarm"
+	"github.com/Yak036/mkd/internal/ai"
+	"github.com/Yak036/mkd/internal/config"
+	"github.com/Yak036/mkd/internal/swarm"
 )
 
 // pumpSwarm ejecuta el orquestador y entrega los eventos del bus al Update

@@ -11,7 +11,7 @@ import (
 
 	openai "github.com/sashabaranov/go-openai"
 
-	"mkd/internal/config"
+	"github.com/Yak036/mkd/internal/config"
 )
 
 // fakeClient simula un modelo que emite una secuencia de respuestas.

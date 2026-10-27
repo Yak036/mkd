@@ -8,7 +8,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"mkd/internal/config"
+	"github.com/Yak036/mkd/internal/config"
 )
 
 var (

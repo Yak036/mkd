@@ -18,8 +18,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"mkd/internal/config"
-	"mkd/internal/swarm"
+	"github.com/Yak036/mkd/internal/config"
+	"github.com/Yak036/mkd/internal/swarm"
 )
 
 // swarmRunCounter genera generaciones monotónicas para descartar eventos de

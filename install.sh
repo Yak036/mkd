@@ -1,19 +1,19 @@
 #!/bin/sh
 # Instalador de MKD.
 #
-#   curl -fsSL https://raw.githubusercontent.com/<user>/mkd/main/install.sh | sh
+#   curl -fsSL https://raw.githubusercontent.com/Yak036/mkd/main/install.sh | sh
 #
 # Variables:
 #   MKD_VERSION      versión a instalar (por defecto: la última release)
 #   MKD_INSTALL_DIR  directorio destino (por defecto: /usr/local/bin o ~/.local/bin)
-#   MKD_REPO         repositorio origen (por defecto: <user>/mkd)
+#   MKD_REPO         repositorio origen (por defecto: Yak036/mkd)
 #
 # Instala el binario con permisos del usuario. Si el directorio destino no es
 # escribible cae a ~/.local/bin sin usar sudo nunca de forma silenciosa.
 
 set -eu
 
-REPO="${MKD_REPO:-<user>/mkd}"
+REPO="${MKD_REPO:-Yak036/mkd}"
 VERSION="${MKD_VERSION:-}"
 BINARY="mkd"
 

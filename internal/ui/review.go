@@ -23,8 +23,8 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	openai "github.com/sashabaranov/go-openai"
 
-	"mkd/internal/ai"
-	"mkd/internal/git"
+	"github.com/Yak036/mkd/internal/ai"
+	"github.com/Yak036/mkd/internal/git"
 )
 
 // reviewTimeout acota la revisión completa (diffs enormes, modelos lentos).

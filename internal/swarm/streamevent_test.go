@@ -6,7 +6,7 @@ import (
 
 	openai "github.com/sashabaranov/go-openai"
 
-	"mkd/internal/config"
+	"github.com/Yak036/mkd/internal/config"
 )
 
 // TestStreamEventEmitted comprueba que el texto final del sub-agente se emite

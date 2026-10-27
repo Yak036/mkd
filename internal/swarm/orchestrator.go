@@ -36,8 +36,8 @@ import (
 
 	openai "github.com/sashabaranov/go-openai"
 
-	"mkd/internal/agent"
-	"mkd/internal/config"
+	"github.com/Yak036/mkd/internal/agent"
+	"github.com/Yak036/mkd/internal/config"
 )
 
 // Nombres de las herramientas de delegación del orquestador.

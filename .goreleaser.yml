@@ -25,9 +25,9 @@ builds:
       - -trimpath
     ldflags:
       - -s -w
-      - -X mkd/internal/version.Version={{ .Version }}
-      - -X mkd/internal/version.Commit={{ .ShortCommit }}
-      - -X mkd/internal/version.BuildDate={{ .Date }}
+      - -X github.com/Yak036/mkd/internal/version.Version={{ .Version }}
+      - -X github.com/Yak036/mkd/internal/version.Commit={{ .ShortCommit }}
+      - -X github.com/Yak036/mkd/internal/version.BuildDate={{ .Date }}
     goos:
       - linux
       - darwin
@@ -94,11 +94,11 @@ changelog:
 brews:
   - name: mkd
     repository:
-      owner: <user>
+      owner: Yak036
       name: homebrew-tap
       token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
     directory: Formula
-    homepage: https://github.com/<user>/mkd
+    homepage: https://github.com/Yak036/mkd
     description: "Asistente de IA para terminal con TUI, agente y sub-agentes"
     license: MIT
     test: |
@@ -108,7 +108,7 @@ brews:
 
 release:
   github:
-    owner: <user>
+    owner: Yak036
     name: mkd
   draft: false
   prerelease: auto
@@ -117,7 +117,7 @@ release:
     ## Instalación
 
     ```bash
-    curl -fsSL https://raw.githubusercontent.com/<user>/mkd/main/install.sh | sh
+    curl -fsSL https://raw.githubusercontent.com/Yak036/mkd/main/install.sh | sh
     ```
 
     O descarga el archivo de tu plataforma arriba.

@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"mkd/internal/config"
+	"github.com/Yak036/mkd/internal/config"
 )
 
 // TestMain convierte el binario de test en un servidor MCP falso cuando se

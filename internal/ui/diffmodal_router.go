@@ -3,7 +3,7 @@ package ui
 import (
 	tea "github.com/charmbracelet/bubbletea"
 
-	"mkd/internal/agent"
+	"github.com/Yak036/mkd/internal/agent"
 )
 
 // openDiffModal abre el modal de permiso para una propuesta. autoApprove debe

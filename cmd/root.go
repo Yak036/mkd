@@ -15,9 +15,9 @@ import (
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
 
-	"mkd/internal/ai"
-	"mkd/internal/config"
-	"mkd/internal/version"
+	"github.com/Yak036/mkd/internal/ai"
+	"github.com/Yak036/mkd/internal/config"
+	"github.com/Yak036/mkd/internal/version"
 )
 
 const (

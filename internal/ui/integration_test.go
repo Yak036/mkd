@@ -9,9 +9,9 @@ import (
 	"github.com/charmbracelet/bubbles/textarea"
 	tea "github.com/charmbracelet/bubbletea"
 
-	"mkd/internal/agent"
-	"mkd/internal/config"
-	mkdcontext "mkd/internal/context"
+	"github.com/Yak036/mkd/internal/agent"
+	"github.com/Yak036/mkd/internal/config"
+	mkdcontext "github.com/Yak036/mkd/internal/context"
 )
 
 // mkTestModel construye un Model mínimo para probar flujos sin TTY.

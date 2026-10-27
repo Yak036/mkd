@@ -24,7 +24,7 @@ import (
 	"sort"
 	"strings"
 
-	"mkd/internal/config"
+	"github.com/Yak036/mkd/internal/config"
 )
 
 // IDs de los perfiles preinstalados.

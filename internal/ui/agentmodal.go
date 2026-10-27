@@ -28,8 +28,8 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
 
-	"mkd/internal/config"
-	"mkd/internal/swarm"
+	"github.com/Yak036/mkd/internal/config"
+	"github.com/Yak036/mkd/internal/swarm"
 )
 
 // agentModalMode alterna entre el roster y el editor de un perfil.

@@ -1,4 +1,4 @@
-module mkd
+module github.com/Yak036/mkd
 
 go 1.27.3
 

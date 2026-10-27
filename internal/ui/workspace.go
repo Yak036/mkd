@@ -16,13 +16,13 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
 
-	"mkd/internal/agent"
-	"mkd/internal/ai"
-	"mkd/internal/config"
-	mkdcontext "mkd/internal/context"
-	"mkd/internal/mcp"
-	"mkd/internal/storage"
-	"mkd/internal/swarm"
+	"github.com/Yak036/mkd/internal/agent"
+	"github.com/Yak036/mkd/internal/ai"
+	"github.com/Yak036/mkd/internal/config"
+	mkdcontext "github.com/Yak036/mkd/internal/context"
+	"github.com/Yak036/mkd/internal/mcp"
+	"github.com/Yak036/mkd/internal/storage"
+	"github.com/Yak036/mkd/internal/swarm"
 )
 
 // getwd aisla os.Getwd para tests del bucle de agente.

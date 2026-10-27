@@ -13,7 +13,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"mkd/internal/skills"
+	"github.com/Yak036/mkd/internal/skills"
 )
 
 // listSkills muestra las skills instaladas en la barra de estado.

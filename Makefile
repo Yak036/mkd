@@ -7,12 +7,14 @@
 #	make snapshot   genera artefactos de release sin publicar (goreleaser)
 
 BINARY      := mkd
-MODULE      := mkd
+MODULE      := github.com/Yak036/mkd
 CMD_DIR     := .
 BIN_DIR     := bin
 INSTALL_DIR ?= $(HOME)/.local/bin
 
-VERSION   ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
+# Sin tag, `git describe` devuelve solo el SHA; con cambios sin commitear añade
+# -dirty y el binario lo refleja igualmente vía vcs.modified.
+VERSION   ?= $(shell git describe --tags --always 2>/dev/null || echo dev)
 COMMIT    ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo none)
 BUILD_DATE ?= $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
 

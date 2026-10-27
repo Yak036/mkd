@@ -4,6 +4,12 @@ Todas las modificaciones relevantes de MKD se documentan aquí.
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-10-27
+
+Primera versión publicada en GitHub. Añade empaquetado y distribución:
+`mkd --version`, releases multiplataforma con goreleaser, instalador `curl | sh`,
+Makefile, CI y documentación.
+
 ### Corregido
 
 - **Editor de sub-agentes: el footer de acciones ya no desaparece.** El modal crecía con el textarea del

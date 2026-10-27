@@ -8,9 +8,9 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/spf13/cobra"
 
-	"mkd/internal/ai"
-	"mkd/internal/mcp"
-	"mkd/internal/ui"
+	"github.com/Yak036/mkd/internal/ai"
+	"github.com/Yak036/mkd/internal/mcp"
+	"github.com/Yak036/mkd/internal/ui"
 )
 
 var chatCmd = &cobra.Command{

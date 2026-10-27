@@ -21,7 +21,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
 
-	mkdcontext "mkd/internal/context"
+	mkdcontext "github.com/Yak036/mkd/internal/context"
 )
 
 // mentionPopupRows es el máximo de filas visibles del popup.

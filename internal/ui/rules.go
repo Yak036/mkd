@@ -17,7 +17,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"mkd/internal/rules"
+	"github.com/Yak036/mkd/internal/rules"
 )
 
 // applyRulesConfig propaga la carpeta global y las reglas forzadas al

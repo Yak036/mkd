@@ -10,11 +10,11 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"mkd/internal/agent"
-	"mkd/internal/ai"
-	"mkd/internal/config"
-	"mkd/internal/git"
-	"mkd/internal/mcp"
+	"github.com/Yak036/mkd/internal/agent"
+	"github.com/Yak036/mkd/internal/ai"
+	"github.com/Yak036/mkd/internal/config"
+	"github.com/Yak036/mkd/internal/git"
+	"github.com/Yak036/mkd/internal/mcp"
 )
 
 // agentCall construye una Call nativa/MCP para probar el enrutador.

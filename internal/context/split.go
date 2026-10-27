@@ -1,6 +1,6 @@
 package context
 
-import "mkd/internal/ai"
+import "github.com/Yak036/mkd/internal/ai"
 
 // compactSplit calcula cuántos mensajes antiguos entran en el 70% inicial,
 // dejando siempre los últimos CompactKeepRecent intactos.
