@@ -6,9 +6,10 @@
 //	│ Copy(text)                                               │
 //	│   1. OSC 52  ──► portapapeles del terminal (si stdout TTY)│
 //	│   2. pbcopy  ──► solo macOS                              │
-//	│   3. wl-copy ──► Wayland (si $WAYLAND_DISPLAY != "")     │
-//	│   4. xclip   ──► X11 (fallback en Linux)                 │
-//	│   5. xsel    ──► X11 (último recurso)                    │
+//	│   3. clip    ──► solo Windows (clip.exe, nativo)         │
+//	│   4. wl-copy ──► Wayland (si $WAYLAND_DISPLAY != "")     │
+//	│   5. xclip   ──► X11 (fallback en Linux)                 │
+//	│   6. xsel    ──► X11 (último recurso)                    │
 //	└──────────────────────────────────────────────────────────┘
 //
 // Solo stdlib: la detección de TTY se hace con os.Stdout.Stat().
@@ -52,7 +53,14 @@ func Copy(text string) error {
 		}
 	}
 
-	// (3)-(5) Linux: Wayland primero, luego X11.
+	// (3) Windows: clip.exe lee de stdin y escribe el portapapeles nativo.
+	if runtime.GOOS == "windows" {
+		if err := copyCommand(text, "clip.exe"); err == nil {
+			return nil
+		}
+	}
+
+	// (4)-(6) Linux: Wayland primero, luego X11.
 	if err := copyLinux(text); err == nil {
 		return nil
 	}
@@ -73,6 +81,12 @@ func Available() []string {
 	if runtime.GOOS == "darwin" {
 		if _, err := exec.LookPath("pbcopy"); err == nil {
 			backends = append(backends, "pbcopy")
+		}
+		return backends
+	}
+	if runtime.GOOS == "windows" {
+		if _, err := exec.LookPath("clip.exe"); err == nil {
+			backends = append(backends, "clip")
 		}
 		return backends
 	}

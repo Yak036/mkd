@@ -33,6 +33,11 @@ need uname
 os="$(uname -s)"
 case "$os" in
 	Linux|Darwin) ;;
+	MINGW*|MSYS*|CYGWIN*|Windows_NT)
+		printf '%s\n' "estás en Windows. Instala con PowerShell:"
+		printf '%s\n' "  irm https://raw.githubusercontent.com/Yak036/mkd/main/install.ps1 | iex"
+		exit 1
+		;;
 	*) fail "sistema no soportado: $os (descarga el binario desde GitHub Releases)" ;;
 esac
 

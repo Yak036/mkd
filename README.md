@@ -50,6 +50,8 @@ mkd --version
 
 ### Script de instalación
 
+**Linux y macOS**
+
 ```bash
 curl -fsSL https://raw.githubusercontent.com/Yak036/mkd/main/install.sh | sh
 ```
@@ -57,6 +59,20 @@ curl -fsSL https://raw.githubusercontent.com/Yak036/mkd/main/install.sh | sh
 Detecta SO y arquitectura, descarga la última release y la instala en
 `/usr/local/bin` (o `~/.local/bin` sin permisos de root). Variables:
 `MKD_VERSION` (fijar versión), `MKD_INSTALL_DIR` (directorio destino).
+
+**Windows (PowerShell)**
+
+```powershell
+irm https://raw.githubusercontent.com/Yak036/mkd/main/install.ps1 | iex
+```
+
+Descarga `mkd.exe`, verifica el checksum SHA-256, lo instala en
+`%LOCALAPPDATA%\mkd` y añade esa carpeta al `PATH` del usuario. No requiere
+administrador ni WSL. Abre una terminal **nueva** después para que el `PATH`
+tenga efecto. Mismas variables: `MKD_VERSION`, `MKD_INSTALL_DIR`.
+
+> En Windows, `run_command` del agente usa **PowerShell** (o `cmd.exe` si no
+> está disponible), y el portapapeles usa `clip.exe`.
 
 ### Con Go
 

@@ -61,7 +61,7 @@ var Tools = []openai.Tool{
 		"Ejecuta un comando de shell en el directorio del proyecto y devuelve exit code + salida "+
 			"(stdout + stderr). Requiere aprobación del usuario. Timeout por defecto 120 s (máx. 600).",
 		schema(map[string]any{
-			"command":         prop("string", "Comando completo para /bin/sh -lc."),
+			"command":         prop("string", "Comando completo para el shell del sistema ("+shellHint()+")."),
 			"timeout_seconds": prop("integer", "Timeout en segundos (por defecto 120, máximo 600)."),
 		}, "command")),
 }

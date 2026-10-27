@@ -4,6 +4,21 @@ Todas las modificaciones relevantes de MKD se documentan aquí.
 
 ## [Unreleased]
 
+### Añadido
+
+- **Soporte Windows completo**:
+  - `install.ps1` para `irm ... | iex`: descarga `mkd.exe`, verifica checksum SHA-256,
+    instala en `%LOCALAPPDATA%\mkd` y añade la carpeta al `PATH` del usuario (sin admin).
+  - `run_command` usa **PowerShell** (`-NoProfile -NonInteractive`) y cae a `cmd.exe`,
+    en lugar de `/bin/sh` que no existe en Windows.
+  - Portapapeles con `clip.exe` como backend nativo.
+  - `~\\ruta` se expande al home del usuario en `skills_dir`/`rules_dir`.
+  - CI ejecuta la suite también en `windows-latest`.
+
+### Corregido
+
+- `install.sh` detecta Git Bash/MSYS/Cygwin y remite a `install.ps1` en vez de fallar.
+
 ## [0.5.0] - 2026-10-27
 
 Primera versión publicada en GitHub. Añade empaquetado y distribución:

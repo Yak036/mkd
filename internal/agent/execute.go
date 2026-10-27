@@ -8,7 +8,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -139,16 +138,6 @@ func formatRunOutput(code int, output string, timeout int) string {
 		b.WriteString(output)
 	}
 	return b.String()
-}
-
-// shellCommand usa /bin/sh -lc si existe (carga el PATH del login) y cae a
-// sh -c en entornos mínimos.
-func shellCommand(ctx context.Context, command string) *exec.Cmd {
-	shell := "/bin/sh"
-	if _, err := os.Stat(shell); err != nil {
-		shell = "sh"
-	}
-	return exec.CommandContext(ctx, shell, "-lc", command)
 }
 
 // truncatedMark se concatena cuando la salida supera el límite.

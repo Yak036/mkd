@@ -69,7 +69,8 @@ func ResolveDir(dir string) string {
 			return home
 		}
 	}
-	if strings.HasPrefix(dir, "~/") {
+	// "~/..." y "~\\..." (Windows) expanden al home del usuario.
+	if strings.HasPrefix(dir, "~/") || strings.HasPrefix(dir, `~\`) {
 		if home, err := os.UserHomeDir(); err == nil && home != "" {
 			return filepath.Join(home, dir[2:])
 		}
