@@ -1,0 +1,123 @@
+# goreleaser: builds multiplataforma, archivos, checksums y publicación.
+#
+#   goreleaser check                 valida este archivo
+#   goreleaser release --snapshot    genera artefactos sin publicar
+#   git tag v0.4.0 && git push --tags   dispara el workflow de release
+#
+# Binarios estáticos (CGO_ENABLED=0) para que funcionen en cualquier distro.
+
+version: 2
+
+project_name: mkd
+
+before:
+  hooks:
+    - go mod tidy
+    - go test ./... -count=1
+
+builds:
+  - id: mkd
+    main: .
+    binary: mkd
+    env:
+      - CGO_ENABLED=0
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w
+      - -X mkd/internal/version.Version={{ .Version }}
+      - -X mkd/internal/version.Commit={{ .ShortCommit }}
+      - -X mkd/internal/version.BuildDate={{ .Date }}
+    goos:
+      - linux
+      - darwin
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    ignore:
+      # Windows ARM64 no tiene usuarios relevantes todavía.
+      - goos: windows
+        goarch: arm64
+
+archives:
+  # Formato de nombre que espera install.sh: mkd_<OS>_<arch>.tar.gz
+  - id: default
+    formats:
+      - tar.gz
+    name_template: >-
+      {{ .ProjectName }}_{{ .Os }}_{{ .Arch }}
+    format_overrides:
+      - goos: windows
+        formats:
+          - zip
+    files:
+      - LICENSE
+      - README.md
+      - CHANGELOG.md
+
+checksum:
+  name_template: checksums.txt
+  algorithm: sha256
+
+snapshot:
+  version_template: "{{ incpatch .Version }}-next"
+
+changelog:
+  use: git
+  sort: asc
+  abbrev: 0
+  groups:
+    - title: Funcionalidades
+      regexp: '^.*?feat(\([[:word:]]+\))??!?:.+$'
+      order: 0
+    - title: Correcciones
+      regexp: '^.*?fix(\([[:word:]]+\))??!?:.+$'
+      order: 1
+    - title: Rendimiento
+      regexp: '^.*?perf(\([[:word:]]+\))??!?:.+$'
+      order: 2
+    - title: Documentación
+      regexp: '^.*?docs(\([[:word:]]+\))??!?:.+$'
+      order: 3
+    - title: Otros
+      order: 999
+  filters:
+    exclude:
+      - '^chore(\(.+\))?!?:'
+      - '^test(\(.+\))?!?:'
+      - '^ci(\(.+\))?!?:'
+      - '^style(\(.+\))?!?:'
+      - '^Merge pull request'
+      - '^Merge branch'
+
+brews:
+  - name: mkd
+    repository:
+      owner: <user>
+      name: homebrew-tap
+      token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
+    directory: Formula
+    homepage: https://github.com/<user>/mkd
+    description: "Asistente de IA para terminal con TUI, agente y sub-agentes"
+    license: MIT
+    test: |
+      system "#{bin}/mkd", "--version"
+    install: |
+      bin.install "mkd"
+
+release:
+  github:
+    owner: <user>
+    name: mkd
+  draft: false
+  prerelease: auto
+  name_template: "v{{ .Version }}"
+  footer: |
+    ## Instalación
+
+    ```bash
+    curl -fsSL https://raw.githubusercontent.com/<user>/mkd/main/install.sh | sh
+    ```
+
+    O descarga el archivo de tu plataforma arriba.
