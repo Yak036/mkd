@@ -6,14 +6,12 @@
 
 TUI completa, modo pipe y one-shot, agente con tool calling, sub-agentes, skills y reglas de proyecto.
 
-[![CI](https://github.com/<user>/mkd/actions/workflows/ci.yml/badge.svg)](https://github.com/<user>/mkd/actions/workflows/ci.yml)
-[![Release](https://img.shields.io/github/v/release/<user>/mkd?sort=semver)](https://github.com/<user>/mkd/releases/latest)
+[![CI](https://github.com/Yak036/mkd/actions/workflows/ci.yml/badge.svg)](https://github.com/Yak036/mkd/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/Yak036/mkd?sort=semver)](https://github.com/Yak036/mkd/releases/latest)
 [![Go](https://img.shields.io/badge/go-1.27%2B-00ADD8?logo=go)](https://go.dev)
 [![License](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
 </div>
-
-> Cambia `<user>` por tu usuario/org de GitHub después de crear el repositorio.
 
 ---
 
@@ -39,12 +37,12 @@ servidores MCP, skills y reglas de proyecto.
 ### Binario precompilado (recomendado)
 
 Descarga el archivo de tu plataforma desde
-[**Releases**](https://github.com/<user>/mkd/releases/latest) y muévelo al `PATH`:
+[**Releases**](https://github.com/Yak036/mkd/releases/latest) y muévelo al `PATH`:
 
 ```bash
 # Linux amd64 (ajusta la versión y la arquitectura)
 curl -fLo mkd.tar.gz \
-  https://github.com/<user>/mkd/releases/latest/download/mkd_Linux_x86_64.tar.gz
+  https://github.com/Yak036/mkd/releases/latest/download/mkd_Linux_x86_64.tar.gz
 tar -xzf mkd.tar.gz mkd
 sudo install -m 0755 mkd /usr/local/bin/mkd
 mkd --version
@@ -53,7 +51,7 @@ mkd --version
 ### Script de instalación
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/<user>/mkd/main/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/Yak036/mkd/main/install.sh | sh
 ```
 
 Detecta SO y arquitectura, descarga la última release y la instala en
@@ -63,7 +61,7 @@ Detecta SO y arquitectura, descarga la última release y la instala en
 ### Con Go
 
 ```bash
-go install github.com/<user>/mkd@latest
+go install github.com/Yak036/mkd@latest
 ```
 
 Requiere Go 1.27 o superior. El binario queda en `$(go env GOPATH)/bin`.
@@ -71,7 +69,7 @@ Requiere Go 1.27 o superior. El binario queda en `$(go env GOPATH)/bin`.
 ### Desde el código
 
 ```bash
-git clone https://github.com/<user>/mkd.git
+git clone https://github.com/Yak036/mkd.git
 cd mkd
 make install          # compila e instala en ~/.local/bin
 # o
@@ -81,7 +79,7 @@ go build -trimpath -ldflags "-s -w" -o mkd .
 ### Homebrew (macOS / Linux)
 
 ```bash
-brew install <user>/tap/mkd
+brew install Yak036/tap/mkd
 ```
 
 ### Arch Linux (AUR)
