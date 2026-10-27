@@ -2034,15 +2034,34 @@ func (m Model) statusView(width int) string {
 		line = agentBadge + badge + " " + warnStyle.Render(oneLine(m.notice, avail))
 	}
 
-	// Aviso de actualización alineado a la derecha, sin robar espacio a las
-	// pistas: si no cabe, se omite (nunca rompe la barra).
+	// Aviso de actualización alineado a la derecha. Tiene prioridad sobre las
+	// pistas: si no cabe se recortan las pistas, nunca el aviso (para que el
+	// usuario se entere de que hay versión nueva).
 	if m.updateNotice != "" {
 		notice := successStyle.Render(m.updateNotice)
 		noticeWidth := lipgloss.Width(notice)
-		lineWidth := lipgloss.Width(line)
-		if lineWidth+noticeWidth+2 <= contentWidth {
-			pad := contentWidth - lineWidth - noticeWidth
-			line += strings.Repeat(" ", pad) + notice
+
+		if noticeWidth+3 >= contentWidth {
+			line = notice
+		} else {
+			// Deja hueco al aviso recortando la parte izquierda de la barra.
+			prefix := ""
+			if m.notice != "" {
+				prefix = warnStyle.Render(oneLine(m.notice, max(4, contentWidth/3))) + " "
+			} else {
+				prefix = agentBadge + badge + " "
+			}
+			avail := contentWidth - lipgloss.Width(prefix) - noticeWidth - 1
+			if avail > 8 {
+				line = prefix + mutedStyle.Render(oneLine(hints, avail))
+			} else {
+				line = prefix
+			}
+			pad := contentWidth - lipgloss.Width(line) - noticeWidth
+			if pad > 0 {
+				line += strings.Repeat(" ", pad)
+			}
+			line += notice
 		}
 	}
 	line = ansi.Truncate(line, contentWidth, "…")
