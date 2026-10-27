@@ -32,6 +32,13 @@ func initRepo(t *testing.T) string {
 	}
 
 	run("init", "-b", "main")
+	// Identidad en el propio repo: Commit() ejecuta git sin variables de
+	// entorno propias, así que la CI (que no tiene user.name global) fallaría
+	// con "Author identity unknown". Configurarla aquí la hace determinista.
+	run("config", "user.name", "MKD Test")
+	run("config", "user.email", "test@example.com")
+	run("config", "commit.gpgsign", "false")
+	run("config", "tag.gpgsign", "false")
 	if err := os.WriteFile(filepath.Join(dir, "README.md"), []byte("hola\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}

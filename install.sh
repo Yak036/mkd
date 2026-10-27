@@ -94,6 +94,8 @@ case ":${PATH}:" in
 	*":${dir}:"*) ;;
 	*)
 		warn "${dir} no está en PATH. Añade esto a tu shell:"
+		# SC2016: $PATH va literal para que el usuario lo copie tal cual.
+		# shellcheck disable=SC2016
 		printf '\n  export PATH="%s:$PATH"\n\n' "$dir"
 		;;
 esac
