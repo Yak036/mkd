@@ -32,14 +32,13 @@ need uname
 # --- Plataforma --------------------------------------------------------------
 os="$(uname -s)"
 case "$os" in
-	Linux)  os="Linux"  ;;
-	Darwin) os="Darwin" ;;
+	Linux|Darwin) ;;
 	*) fail "sistema no soportado: $os (descarga el binario desde GitHub Releases)" ;;
 esac
 
 arch="$(uname -m)"
 case "$arch" in
-	x86_64|amd64) arch="x86_64" ;;
+	x86_64|amd64) arch="amd64" ;;
 	aarch64|arm64) arch="arm64" ;;
 	*) fail "arquitectura no soportada: $arch" ;;
 esac
@@ -59,7 +58,8 @@ info "versión: v${VERSION}"
 tmpdir="$(mktemp -d)"
 trap 'rm -rf "$tmpdir"' EXIT INT TERM
 
-tarball="${BINARY}_${os}_${arch}.tar.gz"
+# goreleaser nombra los artefactos en minúsculas: mkd_linux_amd64.tar.gz
+tarball="${BINARY}_$(printf '%s' "$os" | tr '[:upper:]' '[:lower:]')_${arch}.tar.gz"
 url="https://github.com/${REPO}/releases/download/v${VERSION}/${tarball}"
 
 info "descargando ${url}"
