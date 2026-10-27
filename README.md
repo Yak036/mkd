@@ -295,6 +295,28 @@ Configura servidores en `mcp_servers` de `config.json` o desde `/mcp`
 
 ---
 
+## Actualizar
+
+`mkd` comprueba una vez al día si hay versión nueva y lo muestra en la barra de
+estado: `↑ v0.7.0 disponible · mkd upgrade`.
+
+```bash
+mkd upgrade --check    # ¿hay versión nueva?
+mkd upgrade            # descarga, verifica checksum y se reemplaza
+```
+
+Si instalaste con el script, también puedes repetirlo:
+
+```bash
+# Linux / macOS
+curl -fsSL https://raw.githubusercontent.com/Yak036/mkd/main/install.sh | sh
+
+# Windows
+irm https://raw.githubusercontent.com/Yak036/mkd/main/install.ps1 | iex
+```
+
+La comprobación automática se desactiva con `MKD_NO_UPDATE_CHECK=1`.
+
 ## Configuración
 
 Archivo: `~/.config/mkd/config.json`

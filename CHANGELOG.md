@@ -4,7 +4,20 @@ Todas las modificaciones relevantes de MKD se documentan aquí.
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-10-27
+
 ### Añadido
+
+- **Comprobación y actualización de versión**:
+  - `mkd upgrade` descarga la última release, verifica el SHA-256 contra
+    `checksums.txt` y reemplaza el binario en ejecución (rename atómico en Unix;
+    `.old` en Windows, borrado al siguiente arranque).
+  - `mkd upgrade --check` solo informa sin descargar.
+  - Aviso discreto en la status bar: `↑ v0.7.0 disponible · mkd upgrade`.
+  - Comprobación en segundo plano con caché de 24 h en
+    `~/.local/share/mkd/update_check.json`; nunca bloquea el arranque.
+  - Se desactiva con `MKD_NO_UPDATE_CHECK=1` y automáticamente en CI.
+  - Las builds de desarrollo (`-dirty` / `dev`) no muestran avisos.
 
 - **Soporte Windows completo**:
   - `install.ps1` para `irm ... | iex`: descarga `mkd.exe`, verifica checksum SHA-256,
