@@ -17,6 +17,10 @@ Todas las modificaciones relevantes de MKD se documentan aquí.
 
 ### Corregido
 
+- **Fondo 100% opaco y sólido en terminales transparentes (como OpenCode).**
+  - Implementada la función `paintOpaqueBackground` que envuelve y preserva el color de fondo `surface` (`#18181B`) a través de todos los resets ANSI (`\x1b[0m` y `\x1b[m`), evitando que las áreas vacías o los resets de color dejen ver el fondo transparente del emulador de terminal (VS Code, Alacritty, Kitty, etc.).
+  - Asignado fondo `surface` explícito a los estilos `userBoxStyle`, `assistantBoxStyle`, `inputBoxStyle` y a los componentes interactivos (`textarea` principal, modales y `textinput`).
+  - Nuevo test unitario `TestViewIsAlwaysOpaque` para verificar que cada línea generada por `View()` tenga el escape de fondo opaco garantizado.
 - `install.sh` detecta Git Bash/MSYS/Cygwin y remite a `install.ps1` en vez de fallar.
 
 ## [0.5.0] - 2026-10-27

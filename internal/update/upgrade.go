@@ -313,29 +313,40 @@ func replaceSelf(newBinary string) error {
 	if err := copyFile(newBinary, tmpPath, 0o755); err != nil {
 		return fmt.Errorf("no se pudo escribir el binario nuevo: %w", err)
 	}
+	// CreateTemp deja el archivo en 0600 y OpenFile no cambia el modo de uno
+	// existente: sin este chmod el binario nuevo no sería ejecutable.
+	if err := os.Chmod(tmpPath, 0o755); err != nil {
+		return fmt.Errorf("no se pudo dar permisos al binario nuevo: %w", err)
+	}
+
+	return replacePath(tmpPath, current)
+}
+
+// replacePath sustituye target por src conservando los permisos de ejecución.
+func replacePath(src, target string) error {
+	if err := os.Chmod(src, 0o755); err != nil {
+		return err
+	}
 
 	if runtime.GOOS == "windows" {
 		// Windows no permite renombrar un .exe en uso: se aparta y el nuevo
 		// toma su lugar. El .old se borra en el siguiente arranque.
-		old := current + ".old"
+		old := target + ".old"
 		_ = os.Remove(old)
-		if err := os.Rename(current, old); err != nil {
+		if err := os.Rename(target, old); err != nil {
 			return fmt.Errorf("no se pudo apartar el binario actual (¿mkd en ejecución?): %w", err)
 		}
-		if err := os.Rename(tmpPath, current); err != nil {
-			_ = os.Rename(old, current) // intento de volver atrás
-			return fmt.Errorf("no se pudo reemplazar %s: %w", current, err)
-		}
-		if real != current {
-			_ = copyFile(current, real, 0o755)
+		if err := os.Rename(src, target); err != nil {
+			_ = os.Rename(old, target) // intento de volver atrás
+			return fmt.Errorf("no se pudo reemplazar %s: %w", target, err)
 		}
 		return nil
 	}
 
 	// Unix: rename(2) es atómico y permite sustituir un ejecutable en uso.
 	// El proceso actual sigue con el inode viejo hasta terminar.
-	if err := os.Rename(tmpPath, current); err != nil {
-		return fmt.Errorf("no se pudo reemplazar %s: %w", current, err)
+	if err := os.Rename(src, target); err != nil {
+		return fmt.Errorf("no se pudo reemplazar %s: %w", target, err)
 	}
 	return nil
 }

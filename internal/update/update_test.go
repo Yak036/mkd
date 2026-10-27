@@ -7,6 +7,7 @@ import (
 	"compress/gzip"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 )
 
@@ -204,5 +205,42 @@ func TestExtractMissingBinary(t *testing.T) {
 
 	if _, err := extractFromTarGz(archive, dir, "mkd"); err == nil {
 		t.Fatal("debía fallar si falta el binario")
+	}
+}
+
+// TestReplaceSelfKeepsExecutable valida el reemplazo real del binario en
+// ejecución: debe funcionar (sin ETXTBSY) y dejar permisos 0755.
+func TestReplaceSelfKeepsExecutable(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("el binario en uso no se puede renombrar igual en Windows")
+	}
+	dir := t.TempDir()
+	target := filepath.Join(dir, "bin")
+	if err := os.WriteFile(target, []byte("viejo"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	nuevo := filepath.Join(dir, "nuevo")
+	if err := os.WriteFile(nuevo, []byte("nuevo"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := replacePath(nuevo, target); err != nil {
+		t.Fatalf("replacePath: %v", err)
+	}
+
+	data, err := os.ReadFile(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != "nuevo" {
+		t.Fatalf("contenido = %q", data)
+	}
+	info, err := os.Stat(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm()&0o111 == 0 {
+		t.Fatalf("el binario quedó sin permiso de ejecución: %v", info.Mode())
 	}
 }
