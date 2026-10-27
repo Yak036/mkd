@@ -285,28 +285,56 @@ func writeExecutable(dest string, src io.Reader) error {
 // sobrescribir un .exe en uso, así que se mueve a .old y se deja una nota para
 // borrarlo en el siguiente arranque.
 func replaceSelf(newBinary string) error {
-	current, err := os.Executable()
+	real, err := os.Executable()
 	if err != nil {
 		return fmt.Errorf("no se pudo localizar el binario actual: %w", err)
 	}
-	if resolved, err := filepath.EvalSymlinks(current); err == nil {
+	// Si se invocó a través de un symlink (~/bin/mkd → /usr/local/bin/mkd),
+	// hay que reemplazar el destino, no el enlace.
+	current := real
+	if resolved, err := filepath.EvalSymlinks(real); err == nil {
 		current = resolved
 	}
 
-	// Mismo directorio que el actual: garantiza rename atómico en Unix.
-	target := filepath.Join(filepath.Dir(current), filepath.Base(newBinary))
-	if err := copyFile(newBinary, target, 0o755); err != nil {
+	// El binario nuevo se escribe SIEMPRE en un temporal del mismo directorio:
+	// escribir directamente sobre el que está en ejecución falla con
+	// ETXTBSY ("text file busy") en Linux y con sharing violation en Windows.
+	dir := filepath.Dir(current)
+	tmp, err := os.CreateTemp(dir, ".mkd-upgrade-*")
+	if err != nil {
+		return fmt.Errorf("no se pudo crear el temporal junto a %s: %w", current, err)
+	}
+	tmpPath := tmp.Name()
+	cleanup := func() { _ = os.Remove(tmpPath) }
+	defer cleanup()
+
+	tmp.Close()
+
+	if err := copyFile(newBinary, tmpPath, 0o755); err != nil {
 		return fmt.Errorf("no se pudo escribir el binario nuevo: %w", err)
 	}
 
 	if runtime.GOOS == "windows" {
+		// Windows no permite renombrar un .exe en uso: se aparta y el nuevo
+		// toma su lugar. El .old se borra en el siguiente arranque.
 		old := current + ".old"
 		_ = os.Remove(old)
 		if err := os.Rename(current, old); err != nil {
 			return fmt.Errorf("no se pudo apartar el binario actual (¿mkd en ejecución?): %w", err)
 		}
+		if err := os.Rename(tmpPath, current); err != nil {
+			_ = os.Rename(old, current) // intento de volver atrás
+			return fmt.Errorf("no se pudo reemplazar %s: %w", current, err)
+		}
+		if real != current {
+			_ = copyFile(current, real, 0o755)
+		}
+		return nil
 	}
-	if err := os.Rename(target, current); err != nil {
+
+	// Unix: rename(2) es atómico y permite sustituir un ejecutable en uso.
+	// El proceso actual sigue con el inode viejo hasta terminar.
+	if err := os.Rename(tmpPath, current); err != nil {
 		return fmt.Errorf("no se pudo reemplazar %s: %w", current, err)
 	}
 	return nil
