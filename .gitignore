@@ -1,0 +1,103 @@
+# ─── Binarios compilados ──────────────────────────────────────────────────────
+# `go build` deja el ejecutable en la raíz del módulo; nunca se versiona.
+/mkd
+/mkd.exe
+/mkd-*
+/dist/
+/bin/
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+__debug_bin*
+
+# ─── Go ───────────────────────────────────────────────────────────────────────
+# Cobertura y perfiles generados por `go test`/pprof.
+*.cover
+*.coverprofile
+coverage.txt
+coverage.html
+*.prof
+*.pprof
+cpu.out
+mem.out
+block.out
+mutex.out
+trace.out
+# Documentación generada por godoc.
+*.godoc
+# Control de versiones del toolchain (go.work local, no se publica).
+go.work
+go.work.sum
+
+# ─── Entorno y secretos ───────────────────────────────────────────────────────
+# NUNCA subir claves de API. mkd lee la config de ~/.config/mkd, pero si algún
+# día se copia al repo, estos patrones la excluyen.
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+secrets.json
+config.local.json
+
+# ─── MKD (estado local de desarrollo) ─────────────────────────────────────────
+# Config y estado si se ejecuta con HOME apuntando al repo.
+.mkd/
+.config/mkd/
+config.json
+models_cache.json
+sessions/
+# Reglas y skills declarativas del proyecto SÍ se versionan (.mkd/rules/, skills/),
+# pero los artefactos de prueba no.
+/testdata/out/
+/tmp/
+
+# ─── Editores e IDEs ──────────────────────────────────────────────────────────
+.idea/
+.vscode/*
+!.vscode/settings.json.example
+!.vscode/extensions.json
+*.swp
+*.swo
+*.swn
+*~
+.#*
+\#*#
+.history/
+.nvim.lua
+Session.vim
+
+# ─── Sistema operativo ────────────────────────────────────────────────────────
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+desktop.ini
+
+# ─── Herramientas de release/CI locales ───────────────────────────────────────
+.goreleaser-local.yml
+release-notes.md
+*.snap
+.snapshots/
+.golangci-cache/
+
+# ─── Logs y temporales ────────────────────────────────────────────────────────
+*.log
+logs/
+npm-debug.log*
+yarn-error.log*
+*.tmp
+*.temp
+*.bak
+*.orig
+*.rej
+.cache/
