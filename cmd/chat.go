@@ -11,6 +11,8 @@ import (
 	"github.com/Yak036/mkd/internal/ai"
 	"github.com/Yak036/mkd/internal/mcp"
 	"github.com/Yak036/mkd/internal/ui"
+	"github.com/Yak036/mkd/internal/update"
+	"github.com/Yak036/mkd/internal/version"
 )
 
 var chatCmd = &cobra.Command{
@@ -42,11 +44,11 @@ func runChat(_ *cobra.Command) error {
 	manager := mcp.NewManager(cfg.MCPServers)
 
 	model := ui.New(ui.Options{
-		Client:       client,
-		Config:       cfg,
-		Files:        flagFiles,
-		MCP:          manager,
-		UpdateNotice: passiveUpdateNotice(),
+		Client:      client,
+		Config:      cfg,
+		Files:       flagFiles,
+		MCP:         manager,
+		UpdateCheck: update.BeginCheck(version.Get().Version),
 	})
 
 	program := tea.NewProgram(

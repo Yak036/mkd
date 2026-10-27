@@ -336,3 +336,36 @@ func platformAsset(release Release) (Asset, bool) {
 	}
 	return Asset{}, false
 }
+
+// BeginCheck lanza la comprobación en segundo plano (si la caché está vencida)
+// y devuelve un canal por el que llegará el resultado. El canal siempre recibe
+// exactamente un valor, de modo que la UI puede esperarlo sin bloquear.
+//
+// Si la comprobación está desactivada o la caché está fresca, el canal recibe
+// el estado cacheado de inmediato.
+func BeginCheck(current string) <-chan Check {
+	result := make(chan Check, 1)
+
+	if Disabled() {
+		result <- Check{Current: current}
+		close(result)
+		return result
+	}
+
+	if !ShouldCheck(current) {
+		result <- Cached(current)
+		close(result)
+		return result
+	}
+
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				result <- Check{Current: current, Err: "panic en la comprobación"}
+			}
+			close(result)
+		}()
+		result <- Fetch(context.Background(), current)
+	}()
+	return result
+}

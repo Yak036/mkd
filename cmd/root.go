@@ -98,9 +98,6 @@ func Execute() {
 	// Windows deja el binario anterior como .old tras un `mkd upgrade`.
 	update.CleanupOldBinary()
 
-	// Re-chequeo en segundo plano si la caché venció: nunca bloquea.
-	startUpdateCheck()
-
 	if err := rootCmd.Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, "mkd:", err)
 		os.Exit(1)

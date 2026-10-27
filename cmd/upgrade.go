@@ -1,7 +1,6 @@
 package cmd
 
 import (
-	"context"
 	"fmt"
 	"strings"
 
@@ -59,36 +58,6 @@ anterior como mkd.exe.old y se borra automáticamente en el siguiente arranque.`
 	},
 }
 
-// passiveUpdateNotice consulta (en caché o red) si hay versión nueva y devuelve
-// el aviso para la UI. Es deliberadamente silencioso: ningún fallo se propaga.
-func passiveUpdateNotice() string {
-	if update.Disabled() {
-		return ""
-	}
-	info := version.Get()
-	if check := update.Cached(info.Version); check.Available {
-		return check.Notice()
-	}
-	return ""
-}
-
 func init() {
 	upgradeCmd.Flags().Bool("check", false, "solo comprobar si hay versión nueva, sin descargar")
-}
-
-// startUpdateCheck lanza la consulta a GitHub en segundo plano cuando la caché
-// está vencida. El aviso al usuario se muestra después leyendo la caché, así
-// que el arranque nunca espera a la red.
-func startUpdateCheck() {
-	if update.Disabled() {
-		return
-	}
-	info := version.Get()
-	if !update.ShouldCheck(info.Version) {
-		return
-	}
-	go func() {
-		defer func() { _ = recover() }()
-		update.Fetch(context.Background(), info.Version)
-	}()
 }

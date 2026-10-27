@@ -23,6 +23,7 @@ import (
 	"github.com/Yak036/mkd/internal/mcp"
 	"github.com/Yak036/mkd/internal/storage"
 	"github.com/Yak036/mkd/internal/swarm"
+	"github.com/Yak036/mkd/internal/update"
 )
 
 // getwd aisla os.Getwd para tests del bucle de agente.
@@ -120,8 +121,9 @@ type Options struct {
 	Files  []string
 	// MCP es el gestor de servidores MCP (opcional; nil = sin MCP).
 	MCP *mcp.Manager
-	// UpdateNotice es el aviso de versión nueva para la status bar (opcional).
-	UpdateNotice string
+	// UpdateCheck entrega el resultado de la comprobación de versión (opcional).
+	// La TUI lo escucha sin bloquear el arranque.
+	UpdateCheck <-chan update.Check
 }
 
 // Model es el estado completo del workspace full-screen.
@@ -134,6 +136,8 @@ type Model struct {
 	state  state
 	splash splashModel
 
+	// updateCh entrega el resultado de la comprobación de versión.
+	updateCh <-chan update.Check
 	// updateNotice se muestra en la barra de estado hasta que el usuario
 	// actualice (ej. "↑ v0.7.0 disponible · mkd upgrade").
 	updateNotice string
@@ -264,13 +268,14 @@ func New(opts Options) Model {
 		textarea:       ta,
 		spinner:        sp,
 		sidebarVisible: true,
-		updateNotice:   opts.UpdateNotice,
-		swarm:          newSwarmState(),
-		width:          100,
-		height:         30,
+
+		swarm:  newSwarmState(),
+		width:  100,
+		height: 30,
 	}
 	m.ctxMgr = mkdcontext.NewManager(opts.Config.SystemPrompt, "", mkdcontext.DefaultCompactThreshold)
 	m.applyRulesConfig()
+	m.updateCh = opts.UpdateCheck
 	m.modelsCache, _ = storage.LoadModelsCache()
 	m.startSession()
 	m.seedContextFiles(opts.Files)
@@ -457,7 +462,24 @@ func (m Model) Init() tea.Cmd {
 	if m.mcp != nil {
 		cmds = append(cmds, mcpInitCmd(m.mcp))
 	}
+	if m.updateCh != nil {
+		cmds = append(cmds, waitUpdateCheck(m.updateCh))
+	}
 	return tea.Batch(cmds...)
+}
+
+// updateCheckMsg llega cuando finaliza la comprobación de versión.
+type updateCheckMsg update.Check
+
+// waitUpdateCheck espera el resultado sin bloquear el bucle de la TUI.
+func waitUpdateCheck(ch <-chan update.Check) tea.Cmd {
+	return func() tea.Msg {
+		check, ok := <-ch
+		if !ok {
+			return nil
+		}
+		return updateCheckMsg(check)
+	}
 }
 
 // mcpInitCmd lanza los servidores MCP en segundo plano.
@@ -504,6 +526,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case sessionSavedMsg:
 		return m.handleSessionSaved(msg)
+
+	case updateCheckMsg:
+		if notice := update.Check(msg).Notice(); notice != "" {
+			m.updateNotice = notice
+		}
+		return m, nil
 
 	case agentToolCallsMsg:
 		return m.handleAgentToolCalls(msg)
