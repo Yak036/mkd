@@ -91,20 +91,22 @@ changelog:
       - '^Merge pull request'
       - '^Merge branch'
 
-brews:
-  - name: mkd
-    repository:
-      owner: Yak036
-      name: homebrew-tap
-      token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
-    directory: Formula
-    homepage: https://github.com/Yak036/mkd
-    description: "Asistente de IA para terminal con TUI, agente y sub-agentes"
-    license: MIT
-    test: |
-      system "#{bin}/mkd", "--version"
-    install: |
-      bin.install "mkd"
+# Homebrew se publica con `homebrew_casks` (goreleaser v2; `brews` está
+# deprecado). Requiere el secret HOMEBREW_TAP_TOKEN y un repo homebrew-tap.
+# Si el secret no existe, descomenta el bloque sólo después de crearlo.
+# homebrew_casks:
+#   - name: mkd
+#     repository:
+#       owner: Yak036
+#       name: homebrew-tap
+#       token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
+#     homepage: https://github.com/Yak036/mkd
+#     description: "Asistente de IA para terminal con TUI, agente y sub-agentes"
+#     license: MIT
+#     binaries:
+#       - mkd
+#     test: |
+#       system "#{bin}/mkd", "--version"
 
 release:
   github:
