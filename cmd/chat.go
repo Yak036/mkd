@@ -42,10 +42,11 @@ func runChat(_ *cobra.Command) error {
 	manager := mcp.NewManager(cfg.MCPServers)
 
 	model := ui.New(ui.Options{
-		Client: client,
-		Config: cfg,
-		Files:  flagFiles,
-		MCP:    manager,
+		Client:       client,
+		Config:       cfg,
+		Files:        flagFiles,
+		MCP:          manager,
+		UpdateNotice: passiveUpdateNotice(),
 	})
 
 	program := tea.NewProgram(

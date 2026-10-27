@@ -17,6 +17,7 @@ import (
 
 	"github.com/Yak036/mkd/internal/ai"
 	"github.com/Yak036/mkd/internal/config"
+	"github.com/Yak036/mkd/internal/update"
 	"github.com/Yak036/mkd/internal/version"
 )
 
@@ -94,6 +95,12 @@ func Execute() {
 	defer stop()
 	rootCmd.SetContext(ctx)
 
+	// Windows deja el binario anterior como .old tras un `mkd upgrade`.
+	update.CleanupOldBinary()
+
+	// Re-chequeo en segundo plano si la caché venció: nunca bloquea.
+	startUpdateCheck()
+
 	if err := rootCmd.Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, "mkd:", err)
 		os.Exit(1)
@@ -110,6 +117,7 @@ func init() {
 	rootCmd.AddCommand(chatCmd)
 	rootCmd.AddCommand(configCmd)
 	rootCmd.AddCommand(versionCmd)
+	rootCmd.AddCommand(upgradeCmd)
 }
 
 // effectiveConfig combina archivo, entorno y flags.

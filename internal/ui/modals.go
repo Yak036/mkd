@@ -770,6 +770,12 @@ func newSystemModal(cfg config.Config) systemModal {
 	ta.SetHeight(8)
 	ta.SetWidth(60)
 	ta.SetValue(cfg.SystemPrompt)
+	ta.FocusedStyle.Base = lipgloss.NewStyle().Background(surface)
+	ta.FocusedStyle.CursorLine = lipgloss.NewStyle().Background(surface)
+	ta.FocusedStyle.Prompt = lipgloss.NewStyle().Foreground(purple).Background(surface)
+	ta.FocusedStyle.Placeholder = lipgloss.NewStyle().Foreground(muted).Background(surface)
+	ta.FocusedStyle.Text = lipgloss.NewStyle().Foreground(text).Background(surface)
+	ta.FocusedStyle.EndOfBuffer = lipgloss.NewStyle().Background(surface)
 	ta.Focus()
 	return systemModal{textarea: ta}
 }
@@ -1494,10 +1500,10 @@ func newInput(placeholder string) textinput.Model {
 	input.Prompt = "› "
 	input.CharLimit = 0
 	input.Width = 32
-	input.PromptStyle = lipgloss.NewStyle().Foreground(purple)
-	input.TextStyle = lipgloss.NewStyle().Foreground(text)
-	input.PlaceholderStyle = lipgloss.NewStyle().Foreground(muted)
-	input.Cursor.Style = lipgloss.NewStyle().Foreground(cyan)
+	input.PromptStyle = lipgloss.NewStyle().Foreground(purple).Background(surface)
+	input.TextStyle = lipgloss.NewStyle().Foreground(text).Background(surface)
+	input.PlaceholderStyle = lipgloss.NewStyle().Foreground(muted).Background(surface)
+	input.Cursor.Style = lipgloss.NewStyle().Foreground(cyan).Background(surface)
 	return input
 }
 

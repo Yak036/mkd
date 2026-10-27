@@ -120,6 +120,8 @@ type Options struct {
 	Files  []string
 	// MCP es el gestor de servidores MCP (opcional; nil = sin MCP).
 	MCP *mcp.Manager
+	// UpdateNotice es el aviso de versión nueva para la status bar (opcional).
+	UpdateNotice string
 }
 
 // Model es el estado completo del workspace full-screen.
@@ -131,6 +133,10 @@ type Model struct {
 
 	state  state
 	splash splashModel
+
+	// updateNotice se muestra en la barra de estado hasta que el usuario
+	// actualice (ej. "↑ v0.7.0 disponible · mkd upgrade").
+	updateNotice string
 
 	viewport viewport.Model
 	textarea textarea.Model
@@ -221,15 +227,22 @@ func New(opts Options) Model {
 	)
 	ta.FocusedStyle.Base = lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
-		BorderForeground(purple)
+		BorderForeground(purple).
+		Background(surface)
 	ta.BlurredStyle.Base = lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
-		BorderForeground(border)
-	ta.FocusedStyle.CursorLine = lipgloss.NewStyle()
-	ta.FocusedStyle.Prompt = lipgloss.NewStyle().Foreground(purple)
-	ta.FocusedStyle.Placeholder = lipgloss.NewStyle().Foreground(muted)
-	ta.FocusedStyle.Text = lipgloss.NewStyle().Foreground(text)
-	ta.FocusedStyle.EndOfBuffer = lipgloss.NewStyle()
+		BorderForeground(border).
+		Background(surface)
+	ta.FocusedStyle.CursorLine = lipgloss.NewStyle().Background(surface)
+	ta.FocusedStyle.Prompt = lipgloss.NewStyle().Foreground(purple).Background(surface)
+	ta.FocusedStyle.Placeholder = lipgloss.NewStyle().Foreground(muted).Background(surface)
+	ta.FocusedStyle.Text = lipgloss.NewStyle().Foreground(text).Background(surface)
+	ta.FocusedStyle.EndOfBuffer = lipgloss.NewStyle().Background(surface)
+	ta.BlurredStyle.CursorLine = lipgloss.NewStyle().Background(surface)
+	ta.BlurredStyle.Prompt = lipgloss.NewStyle().Foreground(muted).Background(surface)
+	ta.BlurredStyle.Placeholder = lipgloss.NewStyle().Foreground(muted).Background(surface)
+	ta.BlurredStyle.Text = lipgloss.NewStyle().Foreground(text).Background(surface)
+	ta.BlurredStyle.EndOfBuffer = lipgloss.NewStyle().Background(surface)
 	ta.Focus()
 
 	sp := spinner.New(
@@ -251,6 +264,7 @@ func New(opts Options) Model {
 		textarea:       ta,
 		spinner:        sp,
 		sidebarVisible: true,
+		updateNotice:   opts.UpdateNotice,
 		swarm:          newSwarmState(),
 		width:          100,
 		height:         30,
@@ -601,18 +615,19 @@ func (m Model) View() string {
 
 	base := m.workspaceView()
 	if m.modal.kind != modalNone {
-		return overlayModal(base, m.modalView(), m.width, m.height)
+		base = overlayModal(base, m.modalView(), m.width, m.height)
+	} else {
+		if m.slashMenuVisible {
+			menu := m.slashMenuView()
+			menuHeight := lipgloss.Height(menu)
+			y := m.height - 7 - menuHeight
+			base = overlayAt(base, menu, 2, y, m.width, m.height)
+		}
+		if view, x, y := m.MentionsLayer(); view != "" {
+			base = overlayAt(base, view, x, y, m.width, m.height)
+		}
 	}
-	if m.slashMenuVisible {
-		menu := m.slashMenuView()
-		menuHeight := lipgloss.Height(menu)
-		y := m.height - 7 - menuHeight
-		base = overlayAt(base, menu, 2, y, m.width, m.height)
-	}
-	if view, x, y := m.MentionsLayer(); view != "" {
-		base = overlayAt(base, view, x, y, m.width, m.height)
-	}
-	return base
+	return paintOpaqueBackground(base, m.width, surface)
 }
 
 func (m Model) finishSplash() (tea.Model, tea.Cmd) {
@@ -1989,6 +2004,18 @@ func (m Model) statusView(width int) string {
 	if m.notice != "" {
 		avail := max(4, contentWidth-lipgloss.Width(agentBadge)-lipgloss.Width(badge)-1)
 		line = agentBadge + badge + " " + warnStyle.Render(oneLine(m.notice, avail))
+	}
+
+	// Aviso de actualización alineado a la derecha, sin robar espacio a las
+	// pistas: si no cabe, se omite (nunca rompe la barra).
+	if m.updateNotice != "" {
+		notice := successStyle.Render(m.updateNotice)
+		noticeWidth := lipgloss.Width(notice)
+		lineWidth := lipgloss.Width(line)
+		if lineWidth+noticeWidth+2 <= contentWidth {
+			pad := contentWidth - lineWidth - noticeWidth
+			line += strings.Repeat(" ", pad) + notice
+		}
 	}
 	line = ansi.Truncate(line, contentWidth, "…")
 	if pad := contentWidth - lipgloss.Width(line); pad > 0 {

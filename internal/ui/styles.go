@@ -105,16 +105,19 @@ var (
 	userBoxStyle = lipgloss.NewStyle().
 			Border(lipgloss.RoundedBorder()).
 			BorderForeground(purple).
+			Background(surface).
 			Padding(0, 1)
 
 	assistantBoxStyle = lipgloss.NewStyle().
 				Border(lipgloss.RoundedBorder()).
 				BorderForeground(cyan).
+				Background(surface).
 				Padding(0, 1)
 
 	inputBoxStyle = lipgloss.NewStyle().
 			Border(lipgloss.RoundedBorder()).
 			BorderForeground(purple).
+			Background(surface).
 			Padding(0, 1)
 
 	modalStyle = lipgloss.NewStyle().
@@ -167,6 +170,36 @@ func fitLines(block string, width, height int) string {
 			line += strings.Repeat(" ", pad)
 		}
 		lines[i] = line
+	}
+	return strings.Join(lines, "\n")
+}
+
+// paintOpaqueBackground envuelve cada línea con la secuencia de escape de fondo
+// de surface (#18181B) y preserva el color tras cada reset ANSI (\x1b[0m o \x1b[m).
+// Esto garantiza que la TUI sea 100% opaca y con fondo negro sólido, sin importar
+// si la terminal del usuario (VS Code, Alacritty, Kitty, WezTerm) tiene transparencia activada.
+func paintOpaqueBackground(text string, width int, bg lipgloss.TerminalColor) string {
+	if width <= 0 {
+		return text
+	}
+	bgStyle := lipgloss.NewStyle().Background(bg)
+	sample := bgStyle.Render(" ")
+	suffix := " \x1b[0m"
+	if !strings.HasSuffix(sample, suffix) {
+		return text
+	}
+	prefix := sample[:len(sample)-len(suffix)]
+
+	lines := strings.Split(text, "\n")
+	for i, l := range lines {
+		l = ansi.Truncate(l, width, "")
+		pad := width - lipgloss.Width(l)
+		if pad > 0 {
+			l += strings.Repeat(" ", pad)
+		}
+		l = strings.ReplaceAll(l, "\x1b[0m", "\x1b[0m"+prefix)
+		l = strings.ReplaceAll(l, "\x1b[m", "\x1b[m"+prefix)
+		lines[i] = prefix + l + "\x1b[0m"
 	}
 	return strings.Join(lines, "\n")
 }

@@ -32,6 +32,7 @@ import (
 	"github.com/charmbracelet/bubbles/key"
 	"github.com/charmbracelet/bubbles/textarea"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 	openai "github.com/sashabaranov/go-openai"
 
 	"github.com/Yak036/mkd/internal/ai"
@@ -91,6 +92,12 @@ func newGitCommitModal(status git.Status) gitCommitModal {
 	ta.ShowLineNumbers = false
 	ta.SetHeight(5)
 	ta.SetWidth(60)
+	ta.FocusedStyle.Base = lipgloss.NewStyle().Background(surface)
+	ta.FocusedStyle.CursorLine = lipgloss.NewStyle().Background(surface)
+	ta.FocusedStyle.Prompt = lipgloss.NewStyle().Foreground(purple).Background(surface)
+	ta.FocusedStyle.Placeholder = lipgloss.NewStyle().Foreground(muted).Background(surface)
+	ta.FocusedStyle.Text = lipgloss.NewStyle().Foreground(text).Background(surface)
+	ta.FocusedStyle.EndOfBuffer = lipgloss.NewStyle().Background(surface)
 	return gitCommitModal{phase: commitLoading, status: status, message: ta}
 }
 

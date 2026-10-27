@@ -270,6 +270,12 @@ func (m *Model) buildAgentEditor() {
 	ta.SetHeight(6)
 	ta.SetWidth(50)
 	ta.SetValue(profile.RolePrompt)
+	ta.FocusedStyle.Base = lipgloss.NewStyle().Background(surface)
+	ta.FocusedStyle.CursorLine = lipgloss.NewStyle().Background(surface)
+	ta.FocusedStyle.Prompt = lipgloss.NewStyle().Foreground(purple).Background(surface)
+	ta.FocusedStyle.Placeholder = lipgloss.NewStyle().Foreground(muted).Background(surface)
+	ta.FocusedStyle.Text = lipgloss.NewStyle().Foreground(text).Background(surface)
+	ta.FocusedStyle.EndOfBuffer = lipgloss.NewStyle().Background(surface)
 	am.prompt = ta
 }
 
