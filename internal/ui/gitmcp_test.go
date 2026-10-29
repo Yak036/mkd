@@ -194,8 +194,9 @@ func TestMCPToolRequiresApproval(t *testing.T) {
 func TestAgentToolsIncludeMCP(t *testing.T) {
 	m := mkTestModel(t, t.TempDir(), config.ModeDefault)
 	m.mcp = nil
+	// 6 herramientas de proyecto + ask_user.
 	native := len(m.agentTools())
-	if native != 6 {
+	if native != 7 {
 		t.Fatalf("tools nativas=%d", native)
 	}
 }

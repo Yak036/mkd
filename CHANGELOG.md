@@ -4,6 +4,46 @@ Todas las modificaciones relevantes de MKD se documentan aquí.
 
 ## [Unreleased]
 
+### Añadido
+
+- **Preguntas interactivas del agente (`ask_user`)**:
+  - Nueva herramienta `ask_user` (`internal/agent/question.go`, `internal/agent/tools.go`)
+    con `question`, `header`, `options[{label, description}]` y `allow_custom`.
+    `ParseQuestion` valida y normaliza (máx. 6 opciones, etiquetas en una línea) y
+    devuelve `ArgumentError` para la autocorrección del modelo.
+  - Modal `modalQuestion` (`internal/ui/questionmodal.go`): `↑/↓` o `j/k` navegan,
+    `1-6` elige directo, `Tab` salta a la respuesta libre, `Enter` confirma y
+    `Esc`/`Ctrl+C` cancela. La respuesta siempre está disponible aunque haya
+    opciones, así que el usuario puede escribir la suya.
+  - El bucle de agente pausa las llamadas pendientes, devuelve la respuesta como
+    `role=tool` y continúa la misma ronda; la pregunta queda registrada en el chat
+    como `↳ respuesta: …`.
+  - El system prompt del agente explica cuándo preguntar y que no se usa para
+    pedir permiso de escritura/ejecución.
+  - Las preguntas del **Orquestador Swarm** se enrutan a la misma UI con
+    `swarm.AskUser` + `askUserBridge` (`internal/ui/swarmask.go`); si la misión se
+    cancela, el orquestador deja de esperar. Los sub-agentes no preguntan: deciden
+    y lo anotan en su reporte.
+
+### Corregido
+
+- **Pérdida de contexto al compactar**: el resumen se enviaba dos veces (como
+  `Summary` y como mensaje `<context_summary>` del historial). Ahora
+  `Compact` devuelve solo los mensajes recientes y `Prepare` filtra resúmenes
+  heredados de sesiones antiguas.
+- **Auto-compactación sin umbral**: `startAutoCompact` no llamaba a
+  `shouldAutoCompact()`, así que resumía la conversación tras cualquier turno.
+- **Turnos entrelazados**: enviar un mensaje mientras el agente generaba, esperaba
+  un permiso o una pregunta mezclaba la secuencia `assistant(tool_calls)` →
+  `role=tool`. Ahora `busy()` bloquea el envío y `cancelTurn()` centraliza Esc,
+  `/new`, carga de sesión y limpieza.
+- **Historial inválido tras cancelar**: `ai.SanitizeMessages` elimina
+  `role=tool` huérfanos y `tool_calls` sin respuesta antes de cada petición
+  (OpenAI, OpenRouter, DeepInfra y Ollama rechazan esa secuencia). Si un
+  assistant pierde todas sus llamadas, su texto se conserva.
+- **Respuestas tardías**: un resultado o una pregunta resuelta después de cancelar
+  el turno o cambiar de sesión se descarta en vez de contaminar la conversación.
+
 ## [0.7.0] - 2026-10-27
 
 ### Añadido

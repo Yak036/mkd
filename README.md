@@ -12,7 +12,6 @@ TUI completa, modo pipe y one-shot, agente con tool calling, sub-agentes, skills
 [![License](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
 </div>
-
 ---
 
 ## Qué es
@@ -189,7 +188,7 @@ mkd chat
 | `Ctrl+Y` | Copiar último bloque de código |
 | `Alt+C` | Selector de bloques de código |
 | `Ctrl+B` | Mostrar/ocultar sidebar |
-| `Esc` | Cancelar generación / cerrar modal |
+| `Esc` | Cancelar generación / cerrar modal (también cancela una pregunta) |
 
 ### Comandos de barra
 
@@ -221,6 +220,9 @@ Cuatro familias de herramientas con aprobación **human-in-the-loop**:
 - `search_code` — usa `rg` si está instalado, si no un walker propio con `.gitignore`.
 - `write_file` / `patch_file` — propone cambios y muestra el **diff coloreado** antes de aplicar.
 - `run_command` — ejecuta con timeout y devuelve stdout+stderr al modelo para autocorregirse.
+- `ask_user` — el agente **pregunta durante su razonamiento** con 2-6 opciones y una
+  respuesta libre; el usuario elige con `↑/↓` o `1-6`, escribe la suya con `Tab` o
+  cancela con `Esc`, y el mismo turno continúa con esa decisión.
 
 ### Modos
 
@@ -235,6 +237,10 @@ Cuatro familias de herramientas con aprobación **human-in-the-loop**:
 
 - Ensamblado estable `system → <context_files> → <context_summary> → historial`
   para maximizar el *prefix prompt caching*.
+- El resumen de compactación viaja **una sola vez** (bloque `<context_summary>`), nunca
+  duplicado en el historial.
+- Un turno a la vez: mientras el agente genera, espera un permiso o una pregunta, un
+  mensaje nuevo se rechaza con aviso en vez de entrelazar dos conversaciones.
 - Archivos anclados con hash SHA-256, recargados si cambian en disco.
 - Auto-compactación al superar el umbral de tokens (60 000 por defecto).
 - Menciones `@` con autocompletado por ruta (`@internal/ai/`) y especiales

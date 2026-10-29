@@ -33,6 +33,7 @@ const (
 	modalCommit
 	modalMCP
 	modalAgents
+	modalQuestion
 )
 
 type modalState struct {
@@ -47,6 +48,7 @@ type modalState struct {
 	commit   gitCommitModal
 	mcp      mcpModal
 	agents   agentModal
+	question questionModal
 }
 
 // ---------------------------------------------------------------------------
@@ -1285,6 +1287,8 @@ func (m Model) updateModal(msg tea.KeyMsg) (Model, tea.Cmd) {
 		return m.updateMCPModal(msg)
 	case modalAgents:
 		return m.updateAgentModal(msg)
+	case modalQuestion:
+		return m.handleQuestionKey(msg)
 	default:
 		return m, nil
 	}
@@ -1360,6 +1364,8 @@ func (m Model) modalView() string {
 		return m.mcpModalView()
 	case modalAgents:
 		return m.agentModalView()
+	case modalQuestion:
+		return m.questionModalView()
 	default:
 		return ""
 	}

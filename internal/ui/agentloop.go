@@ -98,6 +98,32 @@ type agentState struct {
 
 	// manualRules son las reglas forzadas con `:@rule-nombre` en la sesión.
 	manualRules []string
+
+	// startIndex es el índice en m.history donde empezó el turno logueado.
+	startIndex int
+}
+
+// logTurnMessage añade un mensaje al historial visible solo si el turno sigue
+// siendo el último y el turno viene del historial (startIndex > 0). Si el
+// usuario ya empezó otro turno o cambió de sesión, el resultado se descarta
+// para no contaminar la conversación nueva.
+func (m *Model) logTurnMessage(message chatMessage) bool {
+	if !m.turnIsCurrent() {
+		return false
+	}
+	m.history = append(m.history, message)
+	m.blocks = append(m.blocks, m.renderMessage(message))
+	m.ensureAgentState().startIndex = len(m.history)
+	return true
+}
+
+// turnIsCurrent indica si el historial no avanzó desde que arrancó el turno.
+// Cada mensaje que el turno añade actualiza startIndex, así que un historial
+// más largo que startIndex significa que el usuario inició otro turno o cargó
+// otra sesión: el resultado ya no pertenece a esta conversación.
+func (m *Model) turnIsCurrent() bool {
+	state := m.ensureAgentState()
+	return state.active && state.startIndex == len(m.history)
 }
 
 // ensureAgentState inicializa el estado del bucle la primera vez.
@@ -134,6 +160,8 @@ func (m Model) agentSystemPrompt() string {
 	b.WriteString("- Usa patch_file para cambios quirúrgicos y write_file solo para archivos nuevos o reescrituras completas.\n")
 	b.WriteString("- Tras escribir código, usa run_command para compilar/probar y corrige los errores en la siguiente ronda.\n")
 	b.WriteString("- Explica brevemente qué vas a hacer antes de cada herramienta.\n")
+	b.WriteString("- Usa ask_user cuando falte una preferencia o decisión que cambie el resultado (enfoque, alcance, librería, estilo) y no puedas deducirla del contexto. Ofrece 2-4 opciones concretas; el usuario puede escribir otra. No la uses para pedir permiso de escritura/ejecución.\n")
+	b.WriteString("- Si el usuario responde una pregunta o cancela, continúa el mismo turno con esa información y no vuelvas a preguntar lo ya decidido.\n")
 	b.WriteString("- Las herramientas con prefijo mcp__<servidor>__<tool> provienen de servidores MCP externos; úsalas cuando aporten datos del entorno (notas, base de datos, etc.).\n")
 	switch mode {
 	case config.ModePlan:
@@ -144,6 +172,29 @@ func (m Model) agentSystemPrompt() string {
 		b.WriteString("- MODO DEFAULT: cada escritura o comando requiere confirmación del usuario; espera su aprobación.\n")
 	}
 	return b.String()
+}
+
+// cancelTurn aborta el turno en curso y descarta sus respuestas pendientes.
+// Es el punto único para Esc, /new, carga de sesión y salida: evita que un
+// resultado tardío aterrice en una conversación distinta.
+func (m *Model) cancelTurn() {
+	if m.cancel != nil {
+		m.cancel()
+		m.cancel = nil
+	}
+	if m.modal.kind == modalQuestion {
+		m.modal.kind = modalNone
+		m.modal.question = questionModal{}
+	}
+	state := m.ensureAgentState()
+	state.active = false
+	state.messages = nil
+	state.pending = nil
+	state.startIndex = 0
+	m.agent.requested = false
+	m.waiting = false
+	m.streaming = false
+	m.mcpPending = nil
 }
 
 // startAgentRound lanza una petición con herramientas. El contenido previo del
@@ -210,11 +261,10 @@ func (m Model) handleAgentToolCalls(msg agentToolCallsMsg) (tea.Model, tea.Cmd) 
 	}
 
 	if text := strings.TrimSpace(msg.assistant.Content); text != "" {
-		message := chatMessage{Role: ai.RoleAssistant, Content: msg.assistant.Content, Display: msg.assistant.Content}
-		m.history = append(m.history, message)
-		m.blocks = append(m.blocks, m.renderMessage(message))
-		m.refresh()
-		m.viewport.GotoBottom()
+		if m.logTurnMessage(chatMessage{Role: ai.RoleAssistant, Content: msg.assistant.Content, Display: msg.assistant.Content}) {
+			m.refresh()
+			m.viewport.GotoBottom()
+		}
 	}
 
 	// La ventana enviada al modelo debe incluir el mensaje del asistente con
@@ -250,6 +300,23 @@ func (m Model) resolveNextProposal() (Model, tea.Cmd) {
 			m.mcpPending[call.ID] = call
 			open, cmd := m.openDiffModal(proposal, m.autoApproveFlag(call.Name))
 			return open, cmd
+		}
+
+		// Preguntas interactivas: si el turno era en modo plan o chat no aplica,
+		// el agente debe decidir; si no, se abre el modal y se espera.
+		if call.Name == agent.ToolAskUser {
+			question, err := agent.ParseQuestion(call)
+			if err != nil {
+				state.messages = append(state.messages, agent.ResultMessage(call.ID, "error de argumentos: "+err.Error()))
+				continue
+			}
+			m.streaming = false
+			m.waiting = false
+			m.notes = append(m.notes, note{Kind: noteInfo, Text: "🗨 pregunta del agente"})
+			m.blocks = append(m.blocks, mutedStyle.Render("🗨 "+question.Summary()))
+			m.refresh()
+			m.viewport.GotoBottom()
+			return m.openQuestionModal(call.ID, question)
 		}
 
 		cwd := m.agentCwd()
@@ -294,7 +361,15 @@ func (m Model) resolveNextProposal() (Model, tea.Cmd) {
 	}
 
 	// Sin más llamadas pendientes: pedimos al modelo que continúe con los
-	// resultados acumulados en la ventana.
+	// resultados acumulados en la ventana. Si el usuario canceló mientras
+	// resolvía un permiso, el turno termina aquí.
+	if m.cancelled || !state.active {
+		state.active = false
+		m.streaming = false
+		m.waiting = false
+		m.agent.requested = false
+		return m.finishTurn()
+	}
 	m.streaming = false
 	return m.startAgentRound()
 }
@@ -423,7 +498,11 @@ func (m Model) handleAgentToolDone(msg agentToolDoneMsg) (tea.Model, tea.Cmd) {
 	case msg.err != nil:
 		header = "› " + msg.name + " · error"
 	}
-	m.blocks = append(m.blocks, mutedStyle.Render(header)+"\n"+m.renderToolDetail(msg.content))
+	// El detalle de la herramienta es efímero: si el usuario ya empezó otro
+	// turno o cambió de sesión, no se agrega al chat nuevo.
+	if m.turnIsCurrent() {
+		m.blocks = append(m.blocks, mutedStyle.Render(header)+"\n"+m.renderToolDetail(msg.content))
+	}
 	m.refresh()
 	m.viewport.GotoBottom()
 
@@ -445,9 +524,7 @@ func (m Model) handleAgentRoundDone(msg agentRoundDoneMsg) (tea.Model, tea.Cmd) 
 
 	content := strings.TrimSpace(msg.content)
 	if content != "" {
-		message := chatMessage{Role: ai.RoleAssistant, Content: content, Display: content}
-		m.history = append(m.history, message)
-		m.blocks = append(m.blocks, m.renderMessage(message))
+		m.logTurnMessage(chatMessage{Role: ai.RoleAssistant, Content: content, Display: content})
 	}
 
 	state.active = false
@@ -458,6 +535,7 @@ func (m Model) handleAgentRoundDone(msg agentRoundDoneMsg) (tea.Model, tea.Cmd) 
 	state.flags = map[string]*bool{}
 	state.results = map[string]string{}
 	state.rounds = 0
+	state.startIndex = 0
 	m.agent.requested = false
 
 	m.refreshUsage()
@@ -494,6 +572,8 @@ func mcpProposal(server, tool string, call agent.Call) agent.Proposal {
 // los servidores MCP conectados (prefijo mcp__<server>__<tool>).
 func (m Model) agentTools() []openai.Tool {
 	tools := append([]openai.Tool(nil), agent.Tools...)
+	// Las preguntas solo tienen sentido durante un turno interactivo de la TUI.
+	tools = append(tools, agent.AskUserTool)
 	if m.mcp != nil {
 		tools = append(tools, m.mcp.Tools()...)
 	}
@@ -541,6 +621,10 @@ func (m Model) startAgent() (Model, tea.Cmd) {
 	state.results = map[string]string{}
 	state.rounds = 0
 	state.active = true
+	// Ronda del turno logueado en el historial. Sin esto, el bucle que resuelve
+	// una pregunta o un permiso no sabría a qué turno pertenece cuando el
+	// usuario envía mensajes posteriores.
+	state.startIndex = len(m.history)
 	m.agent.requested = true
 
 	prepared, _ := m.ctxMgr.Prepare(m.summary, m.apiHistory())
@@ -595,4 +679,20 @@ func autoSummary(proposal agent.Proposal) string {
 	default:
 		return proposal.Tool
 	}
+}
+
+// finishTurn cierra un turno cancelado: persiste lo que haya y refresca.
+func (m Model) finishTurn() (Model, tea.Cmd) {
+	m.streaming = false
+	m.waiting = false
+	m.cancelled = false
+	if m.cancel != nil {
+		m.cancel()
+		m.cancel = nil
+	}
+	m.refreshUsage()
+	m.syncSession()
+	m.persistSession(false)
+	m.refresh()
+	return m, m.maybeAutoCompact()
 }

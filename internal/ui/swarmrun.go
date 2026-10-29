@@ -56,6 +56,7 @@ type swarmPermissionMsg struct {
 type swarmBus struct {
 	events *swarm.EventBus
 	broker *swarm.HITLBroker
+	ask    *askUserBridge
 }
 
 // waitSwarmEvent drena un evento del bus y lo envía a Update.
@@ -122,7 +123,8 @@ func (m Model) startSwarmMission(instruction string) (tea.Model, tea.Cmd) {
 	gen := m.swarm.runGen
 	events := swarm.NewEventBus()
 	broker := swarm.NewHITLBroker()
-	m.bus = &swarmBus{events: events, broker: broker}
+	ask := newAskUserBridge()
+	m.bus = &swarmBus{events: events, broker: broker, ask: ask}
 	m.viewTab = 0
 
 	// Contexto cancelable de la misión.
@@ -137,6 +139,7 @@ func (m Model) startSwarmMission(instruction string) (tea.Model, tea.Cmd) {
 		Broker:   broker,
 		MCPTools: m.mcpToolsForSwarm(),
 		MCPCall:  m.mcpCallerForSwarm(),
+		AskUser:  askUserFromSwarm(ask),
 		Mission:  m.swarm.mission,
 	})
 	orchestrator.AttachCancel(cancel)
@@ -156,6 +159,7 @@ func (m Model) startSwarmMission(instruction string) (tea.Model, tea.Cmd) {
 		m.orchestratorCmd,
 		waitSwarmEvent(events.Events(), gen),
 		waitSwarmPermission(broker.Requests(), gen),
+		waitSwarmAsk(ask.Requests(), gen),
 		m.spinner.Tick,
 	)
 }

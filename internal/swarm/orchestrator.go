@@ -75,6 +75,10 @@ type ClientFactory func(profile config.SubAgentProfile) (Completer, error)
 // Lo inyecta la TUI con el manager MCP real.
 type MCPCaller func(ctx context.Context, name, arguments string) (string, error)
 
+// AskUser pregunta al usuario y espera su respuesta. La TUI lo implementa con
+// el modal de preguntas; sin hook, el orquestador continúa con una suposición.
+type AskUser func(ctx context.Context, question agent.Question) (answer string, cancelled bool)
+
 // Task es una subtarea a delegar.
 type Task struct {
 	AgentID       string
@@ -104,6 +108,7 @@ type Orchestrator struct {
 	broker   *HITLBroker
 	mcpTools []openai.Tool
 	mcpCall  MCPCaller
+	askUser  AskUser
 
 	// mission identifica la ejecución para descartar eventos viejos.
 	mission string
@@ -125,7 +130,9 @@ type Config struct {
 	Broker   *HITLBroker
 	MCPTools []openai.Tool
 	MCPCall  MCPCaller
-	Mission  string
+	// AskUser atiende ask_user del orquestador (nil = sin interacción).
+	AskUser AskUser
+	Mission string
 }
 
 // New construye un orquestador.
@@ -139,6 +146,7 @@ func New(cfg Config) *Orchestrator {
 		broker:   cfg.Broker,
 		mcpTools: mcpTools,
 		mcpCall:  cfg.MCPCall,
+		askUser:  cfg.AskUser,
 		mission:  cfg.Mission,
 		index:    make(map[string]int),
 	}
@@ -159,6 +167,7 @@ func (o *Orchestrator) SystemPrompt() string {
 // investigar lo justo) más delegate_task / delegate_parallel.
 func (o *Orchestrator) Tools() []openai.Tool {
 	tools := append([]openai.Tool(nil), agent.Tools...)
+	tools = append(tools, agent.AskUserTool)
 	tools = append(tools, o.mcpTools...)
 	tools = append(tools, DelegateTools()...)
 	return tools
@@ -169,6 +178,9 @@ func (o *Orchestrator) Tools() []openai.Tool {
 func (o *Orchestrator) HandleToolCall(ctx context.Context, call agent.Call) string {
 	if IsDelegateTool(call.Name) {
 		return o.handleDelegate(ctx, call)
+	}
+	if call.Name == agent.ToolAskUser {
+		return o.handleAskUser(ctx, call)
 	}
 	if strings.HasPrefix(call.Name, "mcp__") {
 		result, err := o.callMCP(ctx, call.Name, call.Arguments)
@@ -190,6 +202,22 @@ func (o *Orchestrator) HandleToolCall(ctx context.Context, call agent.Call) stri
 		return result
 	}
 	return "error: el Orquestador no debe modificar el proyecto directamente; delega en un sub-agente."
+}
+
+// handleAskUser reenvía la pregunta a la TUI y devuelve la respuesta al modelo.
+func (o *Orchestrator) handleAskUser(ctx context.Context, call agent.Call) string {
+	question, err := agent.ParseQuestion(call)
+	if err != nil {
+		return "error: " + err.Error()
+	}
+	if o.askUser == nil {
+		return "No hay interactividad disponible en esta misión: decide con la mejor información y registra la suposición."
+	}
+	answer, cancelled := o.askUser(ctx, question)
+	if cancelled && strings.TrimSpace(answer) == "" {
+		return agent.FormatAnswer(question, agent.Answer{CallID: call.ID, Cancelled: true})
+	}
+	return agent.FormatAnswer(question, agent.Answer{CallID: call.ID, Text: answer})
 }
 
 // handleDelegate procesa delegate_task / delegate_parallel.
@@ -547,6 +575,12 @@ func (o *Orchestrator) execSubAgentTool(ctx context.Context, profile config.SubA
 	name := call.Function.Name
 	args := call.Function.Arguments
 
+	// Preguntas: un sub-agente no habla con el usuario directamente; se le
+	// indica que decida y deje constancia en su reporte.
+	if name == agent.ToolAskUser {
+		return "No hagas preguntas durante una delegación: decide con la mejor información disponible y registra la suposición en tu reporte final."
+	}
+
 	if !ToolAllowed(profile, name) {
 		message := fmt.Sprintf("tool %q no permitida para el sub-agente %s (herramientas: %s)",
 			name, profile.ID, ToolsForPermissions(profile))
@@ -618,8 +652,8 @@ func (o *Orchestrator) callMCP(ctx context.Context, name, args string) (string, 
 
 // subAgentTools filtra el catálogo de tools según AllowedTools del perfil.
 func (o *Orchestrator) subAgentTools(profile config.SubAgentProfile) []openai.Tool {
-	tools := make([]openai.Tool, 0, len(agent.Tools)+len(o.mcpTools))
-	for _, tool := range agent.Tools {
+	tools := make([]openai.Tool, 0, len(agent.Tools)+len(o.mcpTools)+1)
+	for _, tool := range append(append([]openai.Tool(nil), agent.Tools...), agent.AskUserTool) {
 		if tool.Function == nil {
 			continue
 		}
