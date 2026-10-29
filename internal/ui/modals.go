@@ -527,9 +527,9 @@ type modelsModal struct {
 }
 
 func newModelsModal(cfg config.Config) modelsModal {
-	keys := cfg.ProviderKeys()
+	keys := cfg.ConnectedProviderKeys()
 	index := indexOf(keys, cfg.ActiveProvider)
-	if index < 0 {
+	if index < 0 && len(keys) > 0 {
 		index = 0
 	}
 
@@ -608,6 +608,15 @@ func (m Model) openModelsModal() (Model, tea.Cmd) {
 	}
 	m.modal.kind = modalModels
 	m.modal.models = newModelsModal(m.cfg)
+
+	// Si no hay proveedores conectados con éxito, no mostramos modelos
+	// ni realizamos sincronizaciones automáticas.
+	if len(m.modal.models.keys) == 0 {
+		m.textarea.Blur()
+		m.resizeModals()
+		return m, nil
+	}
+
 	for _, key := range m.modal.models.keys {
 		models := m.modelsCache.Models(key)
 		if len(models) == 0 {
@@ -629,7 +638,7 @@ func (m Model) openModelsModal() (Model, tea.Cmd) {
 	}
 	m.modal.models.loadProvider(m.cfg)
 
-	// Sin caché para el proveedor activo (p. ej. API key recién configurada):
+	// Sin caché para el proveedor activo:
 	// sincronizamos automáticamente para no obligar a recordar Ctrl+F.
 	var autoSync tea.Cmd
 	if len(m.modal.models.keys) > 0 {
@@ -938,6 +947,24 @@ func (m Model) modelRows() int {
 
 func (m Model) modelsModalView() string {
 	mm := m.modal.models
+	if len(mm.keys) == 0 {
+		var b strings.Builder
+		b.WriteString(titleStyle.Render("󰚩 Gestión de Modelos (/model)"))
+		b.WriteString("\n\n")
+		b.WriteString(warnStyle.Render("No hay ningún proveedor con conexión exitosa."))
+		b.WriteString("\n\n")
+		b.WriteString(mutedStyle.Render("En /model solo se muestran los modelos de proveedores que hayan sido"))
+		b.WriteString("\n")
+		b.WriteString(mutedStyle.Render("conectados y verificados con éxito mediante /connect."))
+		b.WriteString("\n\n")
+		b.WriteString(titleCyanStyle.Render("Para conectar tu proveedor de IA ejecuta:"))
+		b.WriteString("\n")
+		b.WriteString(titleCyanStyle.Render("  /connect"))
+		b.WriteString("\n\n")
+		b.WriteString(mutedStyle.Render("Esc cerrar"))
+		return m.modalBox(b.String())
+	}
+
 	key := ""
 	provider := config.ProviderConfig{}
 	if len(mm.keys) > 0 {
@@ -1131,8 +1158,9 @@ type paletteAction struct {
 }
 
 var paletteActions = []paletteAction{
-	{ID: "model", Name: "Cambiar / agregar modelo", Description: "Ctrl+M · modelo · gestor multi-modelo"},
-	{ID: "provider", Name: "Configurar proveedor / API key", Description: "Ctrl+K · keys · credenciales"},
+	{ID: "connect", Name: "Conectar proveedor (/connect)", Description: "Ctrl+K · conectar y verificar credenciales de IA"},
+	{ID: "model", Name: "Seleccionar modelo (/model)", Description: "Ctrl+M · modelos de proveedores conectados"},
+	{ID: "provider", Name: "Configurar credenciales (/keys)", Description: "/keys · editar URL y API key"},
 	{ID: "codex", Name: "Autenticación Codex (ChatGPT)", Description: "OAuth · suscripción · ChatGPT Plus/Pro"},
 	{ID: "fetch", Name: "Sincronizar modelos desde API", Description: "GET /v1/models · sincronizar"},
 	{ID: "add", Name: "Adjuntar archivo", Description: "/add <ruta> · archivo · contexto"},

@@ -35,6 +35,7 @@ func TestModelsAutoSyncWithoutCache(t *testing.T) {
 	provider := m.cfg.Providers[m.cfg.ActiveProvider]
 	provider.BaseURL = srv.URL
 	provider.APIKey = "sk-test"
+	provider.Connected = true
 	m.cfg.Providers[m.cfg.ActiveProvider] = provider
 	m.cfg.Normalize()
 	m.modelsCache = storage.ModelsCache{} // sin caché
@@ -89,6 +90,7 @@ func TestModelsNoAutoSyncWithCache(t *testing.T) {
 	m := swarmTestModel(t)
 	provider := m.cfg.Providers[m.cfg.ActiveProvider]
 	provider.APIKey = "sk-test"
+	provider.Connected = true
 	m.cfg.Providers[m.cfg.ActiveProvider] = provider
 	m.cfg.Normalize()
 

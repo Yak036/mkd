@@ -1548,10 +1548,10 @@ func (m *Model) persistConfig() error {
 
 func (m Model) runPaletteAction(id string) (Model, tea.Cmd) {
 	switch id {
+	case "connect", "provider":
+		return m.openProviderModal()
 	case "model":
 		return m.openModelsModal()
-	case "provider":
-		return m.openProviderModal()
 	case "codex":
 		return m.openProviderCodexModal()
 	case "fetch":

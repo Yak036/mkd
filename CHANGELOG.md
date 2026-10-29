@@ -6,6 +6,18 @@ Todas las modificaciones relevantes de MKD se documentan aquí.
 
 ### Añadido
 
+- **Diferenciación estricta entre `/connect` y `/model` con verificación de conexión**:
+  - `/connect` (`modalProvider`): Ahora actúa como el comando y modal dedicado a configurar, conectar y probar conectividad con el proveedor de IA.
+    - Pulsar Enter ejecuta un test de conexión real (`testConnectionCmd`) contra la API del proveedor usando `FetchAvailableModels`.
+    - Muestra un spinner interactivo mientras prueba la conexión.
+    - Si la conexión falla: muestra el error en rojo en el propio modal de `/connect`, marca el proveedor con `Connected = false` y permanece en el modal (NO abre `/model`).
+    - Si la conexión tiene éxito: marca el proveedor con `Connected = true`, sincroniza automáticamente los modelos reales devueltos por la API en la configuración y en la caché, y muestra confirmación en verde.
+    - Visualización del estado en tiempo real (`● Conectado exitosamente` / `○ No conectado`).
+  - `/model` (`modalModels`): Ahora filtra de forma estricta y muestra únicamente proveedores y modelos con conexión exitosa previa (`Connected == true`).
+    - Si ningún proveedor ha tenido conexión exitosa en `/connect`, el modal no muestra modelos ficticios o rotos; en su lugar muestra una pantalla informativa guiando al usuario a utilizar `/connect`.
+    - La navegación entre proveedores (`Ctrl+←/→`) se limita exclusivamente a proveedores conectados exitosamente.
+    - El comando `/model add <id>` rechaza la operación si el proveedor activo no tiene una conexión exitosa verificada.
+
 - **Soporte completo para suscripción de Claude (Anthropic Pro / Team / Enterprise)**:
   - Nuevo comando CLI `mkd auth claude`:
     - `mkd auth claude`: Flujo OAuth 2.0 PKCE en navegador con callback loopback (puerto 54321) y fallback interactivo para ingresar el código o token.
