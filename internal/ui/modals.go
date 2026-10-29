@@ -15,6 +15,7 @@ import (
 	"github.com/charmbracelet/x/cellbuf"
 
 	"github.com/Yak036/mkd/internal/ai"
+	"github.com/Yak036/mkd/internal/claude"
 	"github.com/Yak036/mkd/internal/codex"
 	"github.com/Yak036/mkd/internal/config"
 	"github.com/Yak036/mkd/internal/storage"
@@ -64,6 +65,8 @@ type providerModal struct {
 	apiKey  textinput.Model
 	showKey bool
 	err     string
+	status  string // Mensaje informativo o de conexión exitosa
+	testing bool   // Probando conexión contra el endpoint
 }
 
 func newProviderModal(cfg config.Config) providerModal {
@@ -78,10 +81,14 @@ func newProviderModal(cfg config.Config) providerModal {
 	apiKey.EchoMode = textinput.EchoPassword
 	apiKey.EchoCharacter = '•'
 
+	status := ""
 	if len(keys) > 0 {
 		p := cfg.Providers[keys[index]]
 		baseURL.SetValue(p.BaseURL)
 		apiKey.SetValue(p.APIKey)
+		if p.Connected {
+			status = fmt.Sprintf("● Conectado exitosamente (%d modelos)", len(p.Models))
+		}
 	}
 
 	focus := 0
@@ -95,6 +102,7 @@ func newProviderModal(cfg config.Config) providerModal {
 		focus:   focus,
 		baseURL: baseURL,
 		apiKey:  apiKey,
+		status:  status,
 	}
 }
 
@@ -124,6 +132,11 @@ func (m Model) openProviderCodexModal() (Model, tea.Cmd) {
 
 type codexAuthDoneMsg struct {
 	bundle codex.TokenBundle
+	err    error
+}
+
+type claudeAuthDoneMsg struct {
+	bundle claude.TokenBundle
 	err    error
 }
 
@@ -166,7 +179,7 @@ func (m Model) updateProviderModal(msg tea.KeyMsg) (Model, tea.Cmd) {
 		}
 		return m, nil
 	case key.Matches(msg, keyEnter):
-		return m.saveProviderModal()
+		return m.testAndConnectProvider()
 	case msg.String() == "ctrl+i":
 		key := ""
 		if len(p.keys) > 0 {
@@ -186,9 +199,30 @@ func (m Model) updateProviderModal(msg tea.KeyMsg) (Model, tea.Cmd) {
 			m.cfg.Providers[key] = prov
 			p.apiKey.SetValue(bundle.AccessToken)
 			p.err = ""
+			p.testing = true
+			p.status = "Verificando conexión con Codex…"
 			m.notice = "✓ Sesión de Codex importada de ~/.codex/auth.json"
 			_ = m.persistConfig()
-			return m, fetchModelsCmd(m.cfg, key)
+			return m, tea.Batch(testConnectionCmd(m.cfg, key), m.spinner.Tick)
+		}
+		if key == "claude" {
+			bundle, err := claude.LoadLocalAuth()
+			if err != nil {
+				p.err = "no se pudieron leer credenciales de Claude: " + err.Error()
+				return m, nil
+			}
+			prov := m.cfg.Providers[key]
+			prov.APIKey = bundle.AccessToken
+			prov.RefreshToken = bundle.RefreshToken
+			prov.TokenExpires = bundle.ExpiresAt
+			m.cfg.Providers[key] = prov
+			p.apiKey.SetValue(bundle.AccessToken)
+			p.err = ""
+			p.testing = true
+			p.status = "Verificando conexión con Claude…"
+			m.notice = "✓ Credenciales de Claude importadas exitosamente"
+			_ = m.persistConfig()
+			return m, tea.Batch(testConnectionCmd(m.cfg, key), m.spinner.Tick)
 		}
 	case msg.String() == "ctrl+o":
 		key := ""
@@ -202,6 +236,15 @@ func (m Model) updateProviderModal(msg tea.KeyMsg) (Model, tea.Cmd) {
 				defer cancel()
 				bundle, err := codex.LoginPKCE(ctx, nil)
 				return codexAuthDoneMsg{bundle: bundle, err: err}
+			}
+		}
+		if key == "claude" {
+			p.err = "Iniciando autenticación con Claude en navegador (puerto 54321)…"
+			return m, func() tea.Msg {
+				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+				defer cancel()
+				bundle, err := claude.LoginPKCE(ctx, nil)
+				return claudeAuthDoneMsg{bundle: bundle, err: err}
 			}
 		}
 	case p.focus == 0 && (msg.String() == "left" || msg.String() == "right"):
@@ -238,6 +281,12 @@ func (m Model) switchProviderModal(delta int) (Model, tea.Cmd) {
 	p.apiKey.EchoMode = textinput.EchoPassword
 	p.apiKey.EchoCharacter = '•'
 	p.err = ""
+	p.testing = false
+	if provider.Connected {
+		p.status = fmt.Sprintf("● Conectado exitosamente (%d modelos)", len(provider.Models))
+	} else {
+		p.status = ""
+	}
 	return m, m.focusProviderField(p.focus)
 }
 
@@ -253,21 +302,89 @@ func (m *Model) syncProviderForm() {
 	m.cfg.Providers[key] = provider
 }
 
-func (m Model) saveProviderModal() (Model, tea.Cmd) {
-	m.syncProviderForm()
+// providerConnectionDoneMsg representa el resultado de probar la conexión en /connect.
+type providerConnectionDoneMsg struct {
+	providerKey string
+	models      []string
+	err         error
+}
+
+// testConnectionCmd ejecuta la verificación real de conexión contra el proveedor.
+func testConnectionCmd(cfg config.Config, providerKey string) tea.Cmd {
+	return func() tea.Msg {
+		cfg.ActiveProvider = providerKey
+		cfg.Normalize()
+		client, err := ai.New(cfg)
+		if err != nil {
+			return providerConnectionDoneMsg{providerKey: providerKey, err: err}
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		models, err := client.FetchAvailableModels(ctx)
+		return providerConnectionDoneMsg{providerKey: providerKey, models: models, err: err}
+	}
+}
+
+// testAndConnectProvider valida los datos del formulario e inicia la prueba de conexión.
+func (m Model) testAndConnectProvider() (Model, tea.Cmd) {
 	p := &m.modal.provider
+	if p.testing {
+		return m, nil
+	}
 	if len(p.keys) == 0 {
 		p.err = "no hay proveedores configurados"
 		return m, nil
 	}
+	m.syncProviderForm()
+	key := p.keys[p.index]
+	p.testing = true
+	p.err = ""
+	p.status = fmt.Sprintf("Probando conexión con %s…", config.DisplayName(key))
+	_ = m.persistConfig()
+	return m, tea.Batch(testConnectionCmd(m.cfg, key), m.spinner.Tick)
+}
 
-	m.cfg.ActiveProvider = p.keys[p.index]
+// handleProviderConnectionDone procesa la respuesta del test de conexión.
+func (m Model) handleProviderConnectionDone(msg providerConnectionDoneMsg) (Model, tea.Cmd) {
+	if m.modal.kind != modalProvider {
+		return m, nil
+	}
+	p := &m.modal.provider
+	p.testing = false
+
+	prov := m.cfg.Providers[msg.providerKey]
+	if msg.err != nil {
+		p.err = "✗ Falló la conexión: " + msg.err.Error()
+		p.status = ""
+		prov.Connected = false
+		m.cfg.Providers[msg.providerKey] = prov
+		_ = m.persistConfig()
+		// No se avanza a /model si la conexión no tuvo éxito
+		return m, nil
+	}
+
+	prov.Connected = true
+	if len(msg.models) > 0 {
+		prov.Models = msg.models
+		if prov.ActiveModel == "" || !containsString(prov.Models, prov.ActiveModel) {
+			prov.ActiveModel = msg.models[0]
+		}
+		if cache, err := storage.SaveModelsCache(m.modelsCache, msg.providerKey, msg.models); err == nil {
+			m.modelsCache = cache
+		}
+	}
+	m.cfg.Providers[msg.providerKey] = prov
+	m.cfg.ActiveProvider = msg.providerKey
 	m.cfg.Normalize()
 	if err := m.persistConfig(); err != nil {
 		p.err = err.Error()
 		return m, nil
 	}
-	return m.openModelsModal()
+
+	p.err = ""
+	p.status = fmt.Sprintf("✓ ¡Conexión exitosa con %s! (%d modelos sincronizados)", prov.Name, len(msg.models))
+	m.notice = "✓ Conectado exitosamente con " + prov.Name
+	return m, nil
 }
 
 func (m Model) providerModalView() string {
@@ -283,7 +400,7 @@ func (m Model) providerModalView() string {
 	}
 
 	var b strings.Builder
-	b.WriteString(titleStyle.Render("󰌆 Configurar Proveedor y Credenciales"))
+	b.WriteString(titleStyle.Render("󰌆 Conectar Proveedor de IA (/connect)"))
 	b.WriteString("\n\n")
 
 	selectorLabel := labelStyle
@@ -297,6 +414,12 @@ func (m Model) providerModalView() string {
 	b.WriteString(selectorLabel.Render("Proveedor:"))
 	b.WriteString(" ")
 	b.WriteString(selector)
+	b.WriteString("  ")
+	if provider.Connected {
+		b.WriteString(successStyle.Render("● Conectado exitosamente"))
+	} else {
+		b.WriteString(mutedStyle.Render("○ No conectado"))
+	}
 	b.WriteString("\n\n")
 
 	baseLabel := labelStyle
@@ -335,6 +458,30 @@ func (m Model) providerModalView() string {
 		b.WriteString("\n")
 	}
 
+	if key == "claude" {
+		b.WriteString("\n")
+		if provider.APIKey != "" || provider.RefreshToken != "" {
+			b.WriteString(successStyle.Render("✓ Suscripción / Clave de Claude configurada"))
+		} else if _, err := claude.LoadLocalAuth(); err == nil {
+			b.WriteString(titleCyanStyle.Render("󰌆 Credenciales de Claude detectadas (pulsa Ctrl+I para importarlas)"))
+		} else {
+			b.WriteString(titleCyanStyle.Render("󰌆 Pulsa Ctrl+O para iniciar sesión con Claude en el navegador"))
+		}
+		b.WriteString("\n")
+	}
+
+	if p.testing {
+		b.WriteString("\n")
+		b.WriteString(m.spinner.View())
+		b.WriteString(" ")
+		b.WriteString(titleCyanStyle.Render(p.status))
+		b.WriteString("\n")
+	} else if p.status != "" {
+		b.WriteString("\n")
+		b.WriteString(successStyle.Render(p.status))
+		b.WriteString("\n")
+	}
+
 	if p.err != "" {
 		b.WriteString("\n")
 		b.WriteString(errorStyle.Render(p.err))
@@ -346,9 +493,13 @@ func (m Model) providerModalView() string {
 		b.WriteString(titleCyanStyle.Render("Ctrl+O login navegador · Ctrl+I importar ~/.codex/auth.json"))
 		b.WriteString("\n")
 	}
-	b.WriteString(mutedStyle.Render("Tab/↑↓ campo · ◀/▶ proveedor · Ctrl+U ver/ocultar key"))
+	if key == "claude" {
+		b.WriteString(titleCyanStyle.Render("Ctrl+O login navegador · Ctrl+I importar sesión de Claude"))
+		b.WriteString("\n")
+	}
+	b.WriteString(mutedStyle.Render("Enter probar y conectar · Tab/↑↓ campo · ◀/▶ proveedor · Ctrl+U ver/ocultar key"))
 	b.WriteString("\n")
-	b.WriteString(mutedStyle.Render("Enter guardar y abrir modelos · Esc cancelar"))
+	b.WriteString(mutedStyle.Render("Esc cerrar"))
 	return m.modalBox(b.String())
 }
 
@@ -739,6 +890,7 @@ func (m Model) handleModelsFetched(msg modelsFetchedMsg) (Model, tea.Cmd) {
 func (m Model) handleCodexAuthDone(msg codexAuthDoneMsg) (Model, tea.Cmd) {
 	if msg.err != nil {
 		m.modal.provider.err = fmt.Sprintf("Error de autenticación: %v", msg.err)
+		m.modal.provider.testing = false
 		return m, nil
 	}
 	key := "codex"
@@ -750,10 +902,34 @@ func (m Model) handleCodexAuthDone(msg codexAuthDoneMsg) (Model, tea.Cmd) {
 	m.cfg.Providers[key] = p
 	m.modal.provider.apiKey.SetValue(msg.bundle.AccessToken)
 	m.modal.provider.err = ""
+	m.modal.provider.testing = true
+	m.modal.provider.status = "Verificando conexión con Codex…"
 	_ = codex.SaveLocalAuth(msg.bundle)
 	_ = m.persistConfig()
 	m.notice = "✓ Autenticación de Codex completada exitosamente."
-	return m, fetchModelsCmd(m.cfg, key)
+	return m, tea.Batch(testConnectionCmd(m.cfg, key), m.spinner.Tick)
+}
+
+func (m Model) handleClaudeAuthDone(msg claudeAuthDoneMsg) (Model, tea.Cmd) {
+	if msg.err != nil {
+		m.modal.provider.err = fmt.Sprintf("Error de autenticación con Claude: %v", msg.err)
+		m.modal.provider.testing = false
+		return m, nil
+	}
+	key := "claude"
+	p := m.cfg.Providers[key]
+	p.APIKey = msg.bundle.AccessToken
+	p.RefreshToken = msg.bundle.RefreshToken
+	p.TokenExpires = msg.bundle.ExpiresAt
+	m.cfg.Providers[key] = p
+	m.modal.provider.apiKey.SetValue(msg.bundle.AccessToken)
+	m.modal.provider.err = ""
+	m.modal.provider.testing = true
+	m.modal.provider.status = "Verificando conexión con Claude…"
+	_ = claude.SaveLocalAuth(msg.bundle)
+	_ = m.persistConfig()
+	m.notice = "✓ Autenticación de Claude completada exitosamente."
+	return m, tea.Batch(testConnectionCmd(m.cfg, key), m.spinner.Tick)
 }
 
 func (m Model) modelRows() int {

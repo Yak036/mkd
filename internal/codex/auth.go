@@ -249,7 +249,7 @@ func RefreshAccessToken(ctx context.Context, refreshToken string) (TokenBundle, 
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := codexHTTPClient().Do(req)
 	if err != nil {
 		return TokenBundle{}, fmt.Errorf("error al conectar con %s: %w", TokenURL, err)
 	}
@@ -411,7 +411,7 @@ func LoginPKCE(ctx context.Context, onAuthURL func(string)) (TokenBundle, error)
 	}
 	tokenReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 
-	tokenResp, err := http.DefaultClient.Do(tokenReq)
+	tokenResp, err := codexHTTPClient().Do(tokenReq)
 	if err != nil {
 		return TokenBundle{}, fmt.Errorf("error al intercambiar código: %w", err)
 	}

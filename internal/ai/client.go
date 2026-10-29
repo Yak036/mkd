@@ -23,6 +23,7 @@ import (
 
 	openai "github.com/sashabaranov/go-openai"
 
+	"github.com/Yak036/mkd/internal/claude"
 	"github.com/Yak036/mkd/internal/codex"
 	"github.com/Yak036/mkd/internal/config"
 )
@@ -94,6 +95,25 @@ func New(cfg config.Config) (*Client, error) {
 				provider.APIKey = apiKey
 				provider.RefreshToken = refreshToken
 				provider.AccountID = accountID
+				provider.TokenExpires = tokenExpires
+				cfg.Providers[cfg.ActiveProvider] = provider
+			}
+		}
+	}
+
+	// Si es proveedor Claude o apunta a api.anthropic.com
+	isClaude := cfg.ActiveProvider == "claude" || config.IsClaude(provider.BaseURL)
+	if isClaude {
+		// Si no tiene credenciales en config, intenta importar desde archivos locales o variables
+		if apiKey == "" && refreshToken == "" {
+			if local, err := claude.LoadLocalAuth(); err == nil {
+				apiKey = local.AccessToken
+				refreshToken = local.RefreshToken
+				if tokenExpires == 0 {
+					tokenExpires = local.ExpiresAt
+				}
+				provider.APIKey = apiKey
+				provider.RefreshToken = refreshToken
 				provider.TokenExpires = tokenExpires
 				cfg.Providers[cfg.ActiveProvider] = provider
 			}
@@ -208,6 +228,56 @@ func (c *Client) ensureCodexAuth(ctx context.Context) (accessToken, accountID st
 	return "", "", errors.New("no hay sesión activa de Codex: inicia sesión con `mkd auth codex` o importa con Ctrl+I en Ctrl+K")
 }
 
+// isClaude indica si el cliente utiliza la API o suscripción de Claude (Anthropic).
+func (c *Client) isClaude() bool {
+	return c.ProviderKey == "claude" || config.IsClaude(c.BaseURL)
+}
+
+// ensureClaudeAuth comprueba la validez del token de Claude y lo refresca si está próximo a expirar.
+func (c *Client) ensureClaudeAuth(ctx context.Context) (string, error) {
+	if !c.isClaude() {
+		return c.APIKey, nil
+	}
+
+	now := time.Now().Unix()
+	if c.APIKey != "" && (c.TokenExpires == 0 || c.TokenExpires > now+60) {
+		return c.APIKey, nil
+	}
+
+	// Si tenemos refresh_token, intentamos refrescar contra Anthropic
+	if c.RefreshToken != "" {
+		newBundle, err := claude.RefreshAccessToken(ctx, c.RefreshToken)
+		if err == nil && newBundle.AccessToken != "" {
+			c.APIKey = newBundle.AccessToken
+			if newBundle.RefreshToken != "" {
+				c.RefreshToken = newBundle.RefreshToken
+			}
+			c.TokenExpires = newBundle.ExpiresAt
+
+			go func() {
+				if cfg, err := config.LoadFile(); err == nil {
+					if p, ok := cfg.Providers[c.ProviderKey]; ok {
+						p.APIKey = newBundle.AccessToken
+						p.RefreshToken = c.RefreshToken
+						p.TokenExpires = newBundle.ExpiresAt
+						cfg.Providers[c.ProviderKey] = p
+						_, _ = config.Save(cfg)
+					}
+				}
+				_ = claude.SaveLocalAuth(newBundle)
+			}()
+
+			return c.APIKey, nil
+		}
+	}
+
+	if c.APIKey != "" {
+		return c.APIKey, nil
+	}
+
+	return "", errors.New("no hay sesión activa de Claude: inicia sesión con `mkd auth claude` o importa con Ctrl+I en Ctrl+K")
+}
+
 // Stream lanza la petición y devuelve un canal con la respuesta incremental.
 func (c *Client) Stream(ctx context.Context, system string, history []Message) (<-chan Chunk, error) {
 	return c.StreamMessages(ctx, c.messages(system, history))
@@ -231,6 +301,39 @@ func (c *Client) StreamMessages(ctx context.Context, messages []openai.ChatCompl
 			AccountID:    accountID,
 			Model:        c.Model,
 			Instructions: c.SystemPrompt,
+			Messages:     messages,
+		})
+		if err != nil {
+			return nil, err
+		}
+		out := make(chan Chunk, 64)
+		go func() {
+			defer close(out)
+			for ev := range events {
+				if ev.Err != nil {
+					sendChunk(ctx, out, Chunk{Err: ev.Err})
+					return
+				}
+				if ev.DeltaContent != "" {
+					if !sendChunk(ctx, out, Chunk{Content: ev.DeltaContent}) {
+						return
+					}
+				}
+			}
+		}()
+		return out, nil
+	}
+
+	if c.isClaude() {
+		token, err := c.ensureClaudeAuth(ctx)
+		if err != nil {
+			return nil, err
+		}
+		events, err := claude.StreamMessages(ctx, claude.Request{
+			BaseURL:      c.BaseURL,
+			AccessToken:  token,
+			Model:        c.Model,
+			SystemPrompt: c.SystemPrompt,
 			Messages:     messages,
 		})
 		if err != nil {
@@ -312,6 +415,40 @@ func (c *Client) StreamWithTools(ctx context.Context, messages []openai.ChatComp
 			AccountID:    accountID,
 			Model:        c.Model,
 			Instructions: c.SystemPrompt,
+			Messages:     messages,
+			Tools:        tools,
+		})
+		if err != nil {
+			return nil, err
+		}
+		out := make(chan Chunk, 64)
+		go func() {
+			defer close(out)
+			for ev := range events {
+				if ev.Err != nil {
+					sendChunk(ctx, out, Chunk{Err: ev.Err})
+					return
+				}
+				if ev.DeltaContent != "" {
+					if !sendChunk(ctx, out, Chunk{Content: ev.DeltaContent}) {
+						return
+					}
+				}
+			}
+		}()
+		return out, nil
+	}
+
+	if c.isClaude() {
+		token, err := c.ensureClaudeAuth(ctx)
+		if err != nil {
+			return nil, err
+		}
+		events, err := claude.StreamMessages(ctx, claude.Request{
+			BaseURL:      c.BaseURL,
+			AccessToken:  token,
+			Model:        c.Model,
+			SystemPrompt: c.SystemPrompt,
 			Messages:     messages,
 			Tools:        tools,
 		})
@@ -426,6 +563,42 @@ func (c *Client) CompleteMessagesTools(ctx context.Context, messages []openai.Ch
 		}, nil
 	}
 
+	if c.isClaude() {
+		token, err := c.ensureClaudeAuth(ctx)
+		if err != nil {
+			return openai.ChatCompletionMessage{}, err
+		}
+		events, err := claude.StreamMessages(ctx, claude.Request{
+			BaseURL:      c.BaseURL,
+			AccessToken:  token,
+			Model:        c.Model,
+			SystemPrompt: c.SystemPrompt,
+			Messages:     messages,
+			Tools:        tools,
+		})
+		if err != nil {
+			return openai.ChatCompletionMessage{}, err
+		}
+		var content strings.Builder
+		var toolCalls []openai.ToolCall
+		for ev := range events {
+			if ev.Err != nil {
+				return openai.ChatCompletionMessage{}, ev.Err
+			}
+			if ev.DeltaContent != "" {
+				content.WriteString(ev.DeltaContent)
+			}
+			if len(ev.ToolCalls) > 0 {
+				toolCalls = append(toolCalls, ev.ToolCalls...)
+			}
+		}
+		return openai.ChatCompletionMessage{
+			Role:      openai.ChatMessageRoleAssistant,
+			Content:   content.String(),
+			ToolCalls: toolCalls,
+		}, nil
+	}
+
 	response, err := c.api.CreateChatCompletion(ctx, openai.ChatCompletionRequest{
 		Model:    c.Model,
 		Messages: SanitizeMessages(messages),
@@ -451,7 +624,7 @@ func (c *Client) CompleteMessages(ctx context.Context, messages []openai.ChatCom
 		return "", ErrNotConfigured
 	}
 
-	if c.isCodex() {
+	if c.isCodex() || c.isClaude() {
 		msg, err := c.CompleteMessagesTools(ctx, messages, nil)
 		if err != nil {
 			return "", err
@@ -555,6 +728,14 @@ func (c *Client) FetchAvailableModels(ctx context.Context) ([]string, error) {
 			return nil, err
 		}
 		return codex.FetchModels(ctx, c.BaseURL, token, accountID)
+	}
+
+	if c.isClaude() {
+		token, err := c.ensureClaudeAuth(ctx)
+		if err != nil {
+			return nil, err
+		}
+		return claude.FetchModels(ctx, c.BaseURL, token)
 	}
 
 	if c.BaseURL == "" || (c.APIKey == "" && !config.IsLocal(c.BaseURL)) {

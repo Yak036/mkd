@@ -129,13 +129,19 @@ y se puede sobreescribir con variables de entorno.
 | `openrouter` | `https://openrouter.ai/api/v1` | |
 | `openai` | `https://api.openai.com/v1` | API Key de desarrollador |
 | `codex` | `https://chatgpt.com/backend-api/codex` | Suscripción ChatGPT Plus/Pro/Team (OAuth o ~/.codex) |
+| `claude` | `https://api.anthropic.com/v1` | Suscripción Claude Pro/Team o token setup (`sk-ant-oat...`) |
 | `ollama` | `http://localhost:11434/v1` | Sin API key |
 
 ```bash
+# Autenticación con tu suscripción de Claude (cuota plana Pro/Team/Enterprise):
+mkd auth claude           # Inicia sesión en el navegador con OAuth 2.0 PKCE
+mkd auth claude --import  # O importa credenciales existentes de Claude Code (~/.claude)
+mkd auth claude --token "sk-ant-oat..." # O asigna un setup-token directamente
+
 # Autenticación con tu suscripción de Codex / ChatGPT (cuota plana):
 mkd auth codex           # Inicia sesión en el navegador con OAuth 2.0 PKCE
 mkd auth codex --import  # O importa tu sesión local de ~/.codex/auth.json
-mkd auth status          # Comprueba el estado de la suscripción y token
+mkd auth status          # Comprueba el estado de las suscripciones y tokens
 ```
 
 ```bash

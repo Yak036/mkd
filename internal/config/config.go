@@ -46,7 +46,7 @@ const (
 )
 
 // DefaultProviderOrder mantiene un orden estable para la UI y los selectores.
-var DefaultProviderOrder = []string{"deepinfra", "openrouter", "openai", "codex", "ollama"}
+var DefaultProviderOrder = []string{"deepinfra", "openrouter", "openai", "codex", "claude", "ollama"}
 
 // ProviderConfig agrupa credenciales, endpoint y modelos de un proveedor.
 type ProviderConfig struct {
@@ -58,6 +58,8 @@ type ProviderConfig struct {
 	TokenExpires int64    `json:"token_expires,omitempty"`
 	ActiveModel  string   `json:"active_model"`
 	Models       []string `json:"models"`
+	// Connected indica si el proveedor fue verificado con éxito mediante /connect.
+	Connected bool `json:"connected,omitempty"`
 }
 
 // Modos del agente.
@@ -211,6 +213,17 @@ func Defaults() Config {
 					"gpt-5.3-codex",
 					"gpt-4o",
 					"o3-mini",
+				},
+			},
+			"claude": {
+				Name:        "Claude (Anthropic)",
+				BaseURL:     "https://api.anthropic.com/v1",
+				ActiveModel: "claude-3-7-sonnet-20250219",
+				Models: []string{
+					"claude-3-7-sonnet-20250219",
+					"claude-3-5-sonnet-20241022",
+					"claude-3-5-haiku-20241022",
+					"claude-3-opus-20240229",
 				},
 			},
 			"ollama": {
@@ -469,6 +482,9 @@ func (p ProviderConfig) Configured() bool {
 	if IsCodex(p.BaseURL) {
 		return hasLocalCodexAuth()
 	}
+	if IsClaude(p.BaseURL) {
+		return hasLocalClaudeAuth()
+	}
 	return false
 }
 
@@ -485,6 +501,35 @@ func hasLocalCodexAuth() bool {
 	}
 	_, err = os.Stat(filepath.Join(home, ".codex", "auth.json"))
 	return err == nil
+}
+
+// hasLocalClaudeAuth comprueba si existe una sesión previa o token de Claude en el sistema.
+func hasLocalClaudeAuth() bool {
+	if os.Getenv("CLAUDE_CODE_OAUTH_TOKEN") != "" || os.Getenv("ANTHROPIC_API_KEY") != "" {
+		return true
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return false
+	}
+	candidates := []string{
+		filepath.Join(home, ".claude", ".credentials.json"),
+		filepath.Join(home, ".claude.json"),
+		filepath.Join(home, ".config", "claude", "credentials.json"),
+		filepath.Join(home, ".mkd", "claude_auth.json"),
+	}
+	for _, c := range candidates {
+		if _, err := os.Stat(c); err == nil {
+			return true
+		}
+	}
+	return false
+}
+
+// IsClaude indica si la URL o el proveedor apunta al endpoint de Anthropic Claude.
+func IsClaude(baseURL string) bool {
+	lower := strings.ToLower(baseURL)
+	return strings.Contains(lower, "api.anthropic.com") || strings.Contains(lower, "claude")
 }
 
 // IsCodex indica si la URL o el proveedor apunta al backend de suscripción de Codex/ChatGPT.
@@ -520,6 +565,19 @@ func (c Config) ProviderKeys() []string {
 	}
 	sort.Strings(extra)
 	return append(keys, extra...)
+}
+
+// ConnectedProviderKeys devuelve las claves de proveedores que han tenido
+// una conexión exitosa verificada (Connected == true), manteniendo el orden estable.
+func (c Config) ConnectedProviderKeys() []string {
+	allKeys := c.ProviderKeys()
+	connected := make([]string, 0, len(allKeys))
+	for _, key := range allKeys {
+		if p, ok := c.Providers[key]; ok && p.Connected {
+			connected = append(connected, key)
+		}
+	}
+	return connected
 }
 
 // IsLocal indica si la URL apunta a una instancia local (Ollama, LM Studio...).
@@ -563,6 +621,8 @@ func DisplayName(key string) string {
 		return "OpenAI"
 	case "codex":
 		return "Codex (ChatGPT)"
+	case "claude":
+		return "Claude (Anthropic)"
 	case "ollama":
 		return "Ollama"
 	default:
@@ -590,6 +650,8 @@ func inferProvider(baseURL string) (key, name string) {
 		return "openrouter", "OpenRouter"
 	case strings.Contains(lower, "chatgpt.com/backend-api/codex") || strings.Contains(lower, "codex"):
 		return "codex", "Codex (ChatGPT)"
+	case strings.Contains(lower, "api.anthropic.com") || strings.Contains(lower, "claude"):
+		return "claude", "Claude (Anthropic)"
 	case strings.Contains(lower, "api.openai.com"):
 		return "openai", "OpenAI"
 	case IsLocal(baseURL):

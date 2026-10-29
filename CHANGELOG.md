@@ -6,6 +6,22 @@ Todas las modificaciones relevantes de MKD se documentan aquí.
 
 ### Añadido
 
+- **Soporte completo para suscripción de Claude (Anthropic Pro / Team / Enterprise)**:
+  - Nuevo comando CLI `mkd auth claude`:
+    - `mkd auth claude`: Flujo OAuth 2.0 PKCE en navegador con callback loopback (puerto 54321) y fallback interactivo para ingresar el código o token.
+    - `mkd auth claude --import`: Importación instantánea de credenciales de Claude Code desde `~/.claude/.credentials.json`, `~/.claude.json`, variables `CLAUDE_CODE_OAUTH_TOKEN` / `ANTHROPIC_API_KEY` o `~/.mkd/claude_auth.json`.
+    - `mkd auth claude --token "sk-ant-..."`: Soporte directo para tokens setup de Claude Code (`sk-ant-oat...`) o API Keys tradicionales (`sk-ant-api...`).
+    - Actualizado `mkd auth status` con estado y vigencia de la suscripción de Claude.
+  - Nuevo paquete `internal/claude` implementado 100% en Go estándar (sin dependencias externas):
+    - Flujo OAuth 2.0 PKCE con Client ID oficial de Claude Code (`9d1c250a-e61b-44d9-88ed-5944d1962f5e`).
+    - Renovación automática y transparente de tokens expirados en segundo plano (`RefreshAccessToken`).
+    - Soporte completo para Messages API de Anthropic (`https://api.anthropic.com/v1/messages`) con streaming SSE y Tool Calling unificado.
+    - Detección automática de proxy de red (SOCKS5 local `127.0.0.1:10808` y variables de entorno) con exclusión de loopback.
+  - Integración en la TUI:
+    - Proveedor `Claude (Anthropic)` seleccionable en `Ctrl+K` y paleta de comandos.
+    - Atajos interactivos en el modal de proveedor: `Ctrl+O` para login en navegador y `Ctrl+I` para importar sesión local.
+    - Sincronización automática de modelos (`claude-3-7-sonnet-20250219`, `claude-3-5-sonnet-20241022`, `claude-3-5-haiku-20241022`, etc.).
+
 - **Soporte completo para suscripción de OpenAI Codex (ChatGPT Plus / Pro / Team / Enterprise)**:
   - Nuevo comando CLI `mkd auth`:
     - `mkd auth codex`: Flujo OAuth 2.0 PKCE en navegador con listener HTTP local (puerto 1455) y canje transparente de tokens contra `auth.openai.com`.

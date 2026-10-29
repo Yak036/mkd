@@ -10,12 +10,14 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/Yak036/mkd/internal/ai"
+	"github.com/Yak036/mkd/internal/claude"
 	"github.com/Yak036/mkd/internal/codex"
 	"github.com/Yak036/mkd/internal/config"
 )
 
 var (
 	flagImportLocal bool
+	flagClaudeToken string
 )
 
 var authCmd = &cobra.Command{
@@ -117,6 +119,101 @@ var authCodexCmd = &cobra.Command{
 	},
 }
 
+var authClaudeCmd = &cobra.Command{
+	Use:   "claude",
+	Short: "Inicia sesión con tu suscripción de Claude (Anthropic)",
+	Example: `  # Flujo oficial en navegador (OAuth 2.0 PKCE):
+  mkd auth claude
+
+  # Importar sesión existente de Claude Code (~/.claude/.credentials.json):
+  mkd auth claude --import
+
+  # Pasar token OAuth directo (sk-ant-oat...) o API Key (sk-ant-api...):
+  mkd auth claude --token "sk-ant-oat01-..."`,
+	Args: cobra.NoArgs,
+	RunE: func(cmd *cobra.Command, args []string) error {
+		cfg, err := config.LoadFile()
+		if err != nil {
+			return err
+		}
+
+		var bundle claude.TokenBundle
+
+		if strings.TrimSpace(flagClaudeToken) != "" {
+			token := strings.TrimSpace(flagClaudeToken)
+			bundle = claude.TokenBundle{AccessToken: token}
+			fmt.Println("✓ Token de Claude configurado manualmente.")
+		} else if flagImportLocal {
+			fmt.Println("Buscando sesión existente de Claude en el sistema…")
+			bundle, err = claude.LoadLocalAuth()
+			if err != nil {
+				return fmt.Errorf("no se pudo importar la sesión local de Claude: %w", err)
+			}
+			fmt.Println("✓ Sesión local de Claude encontrada.")
+		} else {
+			fmt.Println("Iniciando flujo de autenticación con Claude (OAuth PKCE)…")
+			ctx, cancel := context.WithTimeout(cmd.Context(), 5*time.Minute)
+			defer cancel()
+
+			bundle, err = claude.LoginPKCE(ctx, func(authURL string) {
+				fmt.Println("\nAbre el siguiente enlace en tu navegador para autorizar MKD:")
+				fmt.Println("\n  " + authURL + "\n")
+				fmt.Println("Esperando confirmación en el navegador (puerto local 54321)…")
+			})
+			if err != nil {
+				return fmt.Errorf("error durante la autenticación de Claude: %w", err)
+			}
+			fmt.Println("\n✓ Autorización con Claude completada con éxito.")
+		}
+
+		// Guardar copia local en ~/.mkd/claude_auth.json para compatibilidad y persistencia
+		_ = claude.SaveLocalAuth(bundle)
+
+		// Actualizar proveedor "claude" en config.json
+		p, ok := cfg.Providers["claude"]
+		if !ok {
+			p = config.ProviderConfig{
+				Name:        "Claude (Anthropic)",
+				BaseURL:     claude.DefaultBaseURL,
+				ActiveModel: claude.DefaultModel,
+			}
+		}
+		p.APIKey = bundle.AccessToken
+		p.RefreshToken = bundle.RefreshToken
+		p.TokenExpires = bundle.ExpiresAt
+		cfg.Providers["claude"] = p
+		cfg.ActiveProvider = "claude"
+
+		// Sincronizar modelos disponibles para Claude
+		fmt.Print("Sincronizando modelos de Claude… ")
+		client, err := ai.New(cfg)
+		if err == nil {
+			if models, err := client.FetchAvailableModels(cmd.Context()); err == nil && len(models) > 0 {
+				p.Models = models
+				if !containsString(p.Models, p.ActiveModel) {
+					p.ActiveModel = p.Models[0]
+				}
+				cfg.Providers["claude"] = p
+				fmt.Printf("%d modelos encontrados.\n", len(models))
+			} else {
+				fmt.Println("usando modelos base por defecto.")
+			}
+		} else {
+			fmt.Println("completado.")
+		}
+
+		path, err := config.Save(cfg)
+		if err != nil {
+			return fmt.Errorf("no se pudo guardar la configuración: %w", err)
+		}
+
+		fmt.Printf("\n✓ Proveedor 'claude' activado y configurado en %s\n", path)
+		fmt.Printf("  Modelo activo: %s\n", p.ActiveModel)
+		fmt.Println("\nPuedes iniciar la TUI ejecutando: mkd chat")
+		return nil
+	},
+}
+
 var authStatusCmd = &cobra.Command{
 	Use:   "status",
 	Short: "Muestra el estado de autenticación y suscripción",
@@ -163,13 +260,47 @@ var authStatusCmd = &cobra.Command{
 			fmt.Println("  (Puedes importarla a MKD con: mkd auth codex --import)")
 		}
 
+		// Estado de Claude
+		pc, hasClaude := cfg.Providers["claude"]
+		fmt.Println("\n[Claude (Anthropic)]")
+		if hasClaude && (pc.APIKey != "" || pc.RefreshToken != "") {
+			fmt.Println("  Estado: Sesión configurada en MKD")
+			if pc.TokenExpires > 0 {
+				exp := time.Unix(pc.TokenExpires, 0)
+				if time.Now().Before(exp) {
+					fmt.Printf("  Expira: %s (en %s)\n", exp.Format("2006-01-02 15:04:05"), time.Until(exp).Round(time.Minute))
+				} else {
+					fmt.Println("  Token expirado (se refrescará automáticamente con el refresh token)")
+				}
+			}
+			fmt.Printf("  Modelo activo: %s\n", pc.ActiveModel)
+			if len(pc.Models) > 0 {
+				fmt.Printf("  Modelos: %s\n", strings.Join(pc.Models, ", "))
+			}
+		} else {
+			fmt.Println("  Estado: No configurado en config.json")
+		}
+
+		// Chequear si existe sesión local de Claude
+		if localClaude, err := claude.LoadLocalAuth(); err == nil {
+			fmt.Println("\n[Sesión externa de Claude detectada en el sistema]")
+			if localClaude.ExpiresAt > 0 {
+				fmt.Printf("  Expira: %s\n", time.Unix(localClaude.ExpiresAt, 0).Format("2006-01-02 15:04:05"))
+			}
+			fmt.Println("  (Puedes importarla a MKD con: mkd auth claude --import)")
+		}
+
 		return nil
 	},
 }
 
 func init() {
 	authCodexCmd.Flags().BoolVar(&flagImportLocal, "import", false, "importa la sesión existente de ~/.codex/auth.json en lugar de abrir el navegador")
+	authClaudeCmd.Flags().BoolVar(&flagImportLocal, "import", false, "importa credenciales existentes de Claude en disco o variables de entorno")
+	authClaudeCmd.Flags().StringVar(&flagClaudeToken, "token", "", "asigna directamente un setup-token, token OAuth (sk-ant-oat...) o API key (sk-ant-api...)")
+
 	authCmd.AddCommand(authCodexCmd)
+	authCmd.AddCommand(authClaudeCmd)
 	authCmd.AddCommand(authStatusCmd)
 }
 

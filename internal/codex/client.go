@@ -9,12 +9,95 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
+	"net/url"
+	"os"
+	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	openai "github.com/sashabaranov/go-openai"
 )
+
+// codexProxyFunc devuelve la URL del proxy a utilizar, evitando enviar tráfico loopback
+// (como tests con httptest.Server) al proxy externo y detectando automáticamente
+// si el túnel SOCKS5 local de Codex (127.0.0.1:10808) está activo.
+func codexProxyFunc(req *http.Request) (*url.URL, error) {
+	host := req.URL.Hostname()
+	if host == "localhost" || host == "127.0.0.1" || strings.HasPrefix(host, "127.") || host == "::1" {
+		return nil, nil
+	}
+
+	if envProxy, err := http.ProxyFromEnvironment(req); err == nil && envProxy != nil {
+		return envProxy, nil
+	}
+
+	proxyHost := os.Getenv("CODEX_PROXY_HOST")
+	if proxyHost == "" {
+		proxyHost = "127.0.0.1"
+	}
+	proxyPort := os.Getenv("CODEX_PROXY_PORT")
+	if proxyPort == "" {
+		proxyPort = "10808"
+	}
+	addr := net.JoinHostPort(proxyHost, proxyPort)
+	conn, err := net.DialTimeout("tcp", addr, 100*time.Millisecond)
+	if err == nil {
+		conn.Close()
+		return url.Parse("socks5://" + addr)
+	}
+	return nil, nil
+}
+
+// codexHTTPClient construye un cliente HTTP con soporte para proxy y timeout.
+func codexHTTPClient() *http.Client {
+	transport := &http.Transport{
+		Proxy: codexProxyFunc,
+	}
+	return &http.Client{
+		Transport: transport,
+		Timeout:   60 * time.Second,
+	}
+}
+
+// LoadLocalModelsCache lee los modelos sincronizados en ~/.codex/models_cache.json si existe.
+func LoadLocalModelsCache() ([]string, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return nil, err
+	}
+	path := filepath.Join(home, ".codex", "models_cache.json")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	var mr modelsResponse
+	if err := json.Unmarshal(data, &mr); err != nil {
+		return nil, err
+	}
+	seen := make(map[string]bool)
+	var models []string
+	for _, m := range mr.Models {
+		id := firstNonEmpty(m.Slug, m.ID)
+		if id != "" && !seen[id] {
+			seen[id] = true
+			models = append(models, id)
+		}
+	}
+	for _, d := range mr.Data {
+		if d.ID != "" && !seen[d.ID] {
+			seen[d.ID] = true
+			models = append(models, d.ID)
+		}
+	}
+	if len(models) == 0 {
+		return nil, errors.New("no se encontraron modelos en models_cache.json")
+	}
+	sort.Strings(models)
+	return models, nil
+}
 
 // StreamEvent representa un fragmento de texto o llamada a herramienta en tiempo real.
 type StreamEvent struct {
@@ -53,54 +136,68 @@ func FetchModels(ctx context.Context, baseURL, accessToken, accountID string) ([
 	}
 	baseURL = strings.TrimRight(baseURL, "/")
 
-	reqURL := fmt.Sprintf("%s/models?client_version=0.1.0", baseURL)
+	reqURL := fmt.Sprintf("%s/models?client_version=0.165.0", baseURL)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, reqURL, nil)
 	if err != nil {
 		return nil, err
 	}
 
 	req.Header.Set("Authorization", "Bearer "+strings.TrimSpace(accessToken))
+	req.Header.Set("User-Agent", "codex-cli/0.165.0")
 	if strings.TrimSpace(accountID) != "" {
 		req.Header.Set("ChatGPT-Account-Id", strings.TrimSpace(accountID))
 	}
 
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("error al consultar modelos de Codex: %w", err)
-	}
-	defer resp.Body.Close()
-
-	body, _ := io.ReadAll(resp.Body)
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("error al listar modelos de Codex (HTTP %d): %s", resp.StatusCode, string(body))
-	}
-
-	var mr modelsResponse
-	if err := json.Unmarshal(body, &mr); err != nil {
-		return nil, fmt.Errorf("respuesta inválida de catálogo de modelos: %w", err)
-	}
-
-	seen := make(map[string]bool)
-	var models []string
-	for _, m := range mr.Models {
-		id := firstNonEmpty(m.Slug, m.ID)
-		if id != "" && !seen[id] {
-			seen[id] = true
-			models = append(models, id)
+	client := codexHTTPClient()
+	resp, err := client.Do(req)
+	if err == nil && resp.StatusCode == http.StatusOK {
+		defer resp.Body.Close()
+		body, _ := io.ReadAll(resp.Body)
+		var mr modelsResponse
+		if err := json.Unmarshal(body, &mr); err == nil {
+			seen := make(map[string]bool)
+			var models []string
+			for _, m := range mr.Models {
+				id := firstNonEmpty(m.Slug, m.ID)
+				if id != "" && !seen[id] {
+					seen[id] = true
+					models = append(models, id)
+				}
+			}
+			for _, d := range mr.Data {
+				if d.ID != "" && !seen[d.ID] {
+					seen[d.ID] = true
+					models = append(models, d.ID)
+				}
+			}
+			if len(models) > 0 {
+				sort.Strings(models)
+				return models, nil
+			}
 		}
 	}
-	for _, d := range mr.Data {
-		if d.ID != "" && !seen[d.ID] {
-			seen[d.ID] = true
-			models = append(models, d.ID)
-		}
+	if resp != nil {
+		resp.Body.Close()
 	}
 
-	if len(models) == 0 {
-		// Modelos base garantizados de Codex si el endpoint responde vacío
-		models = []string{"gpt-5.3-codex", "gpt-4o", "o3-mini"}
+	// Fallback 1: Si falló la consulta remota, leer caché local sincronizado en ~/.codex/models_cache.json
+	if cached, err := LoadLocalModelsCache(); err == nil && len(cached) > 0 {
+		return cached, nil
 	}
 
+	// Fallback 2: Modelos base garantizados de Codex
+	models := []string{
+		"gpt-6.1-sol",
+		"gpt-6.1-terra",
+		"gpt-6-astra",
+		"gpt-6-sol",
+		"gpt-5.6-sol",
+		"gpt-5.6-terra",
+		"gpt-5.6-luna",
+		"gpt-5.3-codex",
+		"gpt-4o",
+		"o3-mini",
+	}
 	sort.Strings(models)
 	return models, nil
 }
@@ -126,12 +223,14 @@ func StreamResponses(ctx context.Context, req Request) (<-chan StreamEvent, erro
 
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set("Accept", "text/event-stream")
+	httpReq.Header.Set("User-Agent", "codex-cli/0.165.0")
 	httpReq.Header.Set("Authorization", "Bearer "+strings.TrimSpace(req.AccessToken))
 	if strings.TrimSpace(req.AccountID) != "" {
 		httpReq.Header.Set("ChatGPT-Account-Id", strings.TrimSpace(req.AccountID))
 	}
 
-	resp, err := http.DefaultClient.Do(httpReq)
+	client := codexHTTPClient()
+	resp, err := client.Do(httpReq)
 	if err != nil {
 		return nil, fmt.Errorf("error al conectar con backend de Codex: %w", err)
 	}

@@ -83,10 +83,10 @@ type slashCommand struct {
 }
 
 var slashCommands = []slashCommand{
-	{Name: "/model", Description: "Cambiar, agregar o sincronizar modelos"},
-	{Name: "/model add", Description: "Agregar y activar un modelo: /model add <id>"},
-	{Name: "/keys", Description: "Configurar proveedor y API key"},
-	{Name: "/connect", Description: "Alias de /keys"},
+	{Name: "/connect", Description: "Conectar y verificar proveedor de IA"},
+	{Name: "/model", Description: "Seleccionar modelo de proveedores conectados"},
+	{Name: "/model add", Description: "Agregar modelo al proveedor conectado: /model add <id>"},
+	{Name: "/keys", Description: "Configurar credenciales de proveedores"},
 	{Name: "/add", Description: "Adjuntar archivo al contexto: /add <ruta>"},
 	{Name: "/remove", Description: "Quitar archivo del contexto: /remove <ruta>"},
 	{Name: "/system", Description: "Editar el system prompt activo"},
@@ -508,8 +508,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case modelsFetchedMsg:
 		return m.handleModelsFetched(msg)
 
+	case providerConnectionDoneMsg:
+		return m.handleProviderConnectionDone(msg)
+
 	case codexAuthDoneMsg:
 		return m.handleCodexAuthDone(msg)
+
+	case claudeAuthDoneMsg:
+		return m.handleClaudeAuthDone(msg)
 
 	case compactDoneMsg:
 		return m.handleCompactDone(msg)
@@ -566,7 +572,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handleSwarmAsk(msg)
 
 	case spinner.TickMsg:
-		if !m.waiting && !m.modal.models.loading && !m.agent.requested && !m.swarm.running {
+		if !m.waiting && !m.modal.models.loading && !m.modal.provider.testing && !m.agent.requested && !m.swarm.running {
 			return m, nil
 		}
 		var cmd tea.Cmd
@@ -902,9 +908,13 @@ func (m Model) handleSlash(text string) (tea.Model, tea.Cmd) {
 
 	case strings.HasPrefix(text, "/model add "):
 		id := strings.TrimSpace(strings.TrimPrefix(text, "/model add"))
+		if active, ok := m.cfg.Active(); !ok || !active.Connected {
+			m.notice = "El proveedor activo no tiene una conexión exitosa. Conéctate primero con /connect"
+			return m, nil
+		}
 		return m.addModelAndActivate(id)
 
-	case text == "/keys" || text == "/connect":
+	case text == "/connect" || text == "/keys":
 		return m.openProviderModal()
 
 	case text == "/add":
