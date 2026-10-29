@@ -4,6 +4,25 @@ Todas las modificaciones relevantes de MKD se documentan aquí.
 
 ## [Unreleased]
 
+### Añadido
+
+- **Soporte completo para suscripción de OpenAI Codex (ChatGPT Plus / Pro / Team / Enterprise)**:
+  - Nuevo comando CLI `mkd auth`:
+    - `mkd auth codex`: Flujo OAuth 2.0 PKCE en navegador con listener HTTP local (puerto 1455) y canje transparente de tokens contra `auth.openai.com`.
+    - `mkd auth codex --import`: Importación instantánea de credenciales existentes de `~/.codex/auth.json` o `$CODEX_HOME/auth.json`.
+    - `mkd auth status`: Visualización del estado de autenticación, cuenta vinculada y vigencia del token.
+  - Nuevo paquete `internal/codex` implementado 100% con librería estándar de Go (sin dependencias adicionales):
+    - Flujo OAuth 2.0 PKCE (`app_EMoamEEZ73f0CkXaXp7hrann`).
+    - Decodificación segura de claims JWT para extracción de `account_id` (`chatgpt_account_id`) y expiración.
+    - Renovación automática y transparente de tokens en segundo plano (`RefreshAccessToken`).
+    - Adaptador de transporte sobre SSE para el endpoint de suscripción de Codex (`https://chatgpt.com/backend-api/codex/responses` y `/models`).
+  - Integración en la TUI:
+    - Proveedor `Codex (ChatGPT)` configurable desde `Ctrl+K`.
+    - Atajos interactivos en el modal de proveedor: `Ctrl+O` para login en navegador y `Ctrl+I` para importar sesión local.
+    - Acción directa en la paleta de comandos (`Ctrl+P` -> `Autenticación Codex (ChatGPT)`).
+    - Sincronización automática de los modelos habilitados en el plan del usuario al autenticarse.
+
+
 ## [0.7.0] - 2026-10-27
 
 ### Añadido

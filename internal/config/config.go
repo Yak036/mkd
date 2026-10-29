@@ -46,15 +46,18 @@ const (
 )
 
 // DefaultProviderOrder mantiene un orden estable para la UI y los selectores.
-var DefaultProviderOrder = []string{"deepinfra", "openrouter", "openai", "ollama"}
+var DefaultProviderOrder = []string{"deepinfra", "openrouter", "openai", "codex", "ollama"}
 
 // ProviderConfig agrupa credenciales, endpoint y modelos de un proveedor.
 type ProviderConfig struct {
-	Name        string   `json:"name"`
-	BaseURL     string   `json:"base_url"`
-	APIKey      string   `json:"api_key"`
-	ActiveModel string   `json:"active_model"`
-	Models      []string `json:"models"`
+	Name         string   `json:"name"`
+	BaseURL      string   `json:"base_url"`
+	APIKey       string   `json:"api_key"`
+	RefreshToken string   `json:"refresh_token,omitempty"`
+	AccountID    string   `json:"account_id,omitempty"`
+	TokenExpires int64    `json:"token_expires,omitempty"`
+	ActiveModel  string   `json:"active_model"`
+	Models       []string `json:"models"`
 }
 
 // Modos del agente.
@@ -199,6 +202,16 @@ func Defaults() Config {
 				BaseURL:     "https://api.openai.com/v1",
 				ActiveModel: "gpt-4o",
 				Models:      []string{"gpt-4o", "gpt-4o-mini", "o3-mini"},
+			},
+			"codex": {
+				Name:        "Codex (ChatGPT)",
+				BaseURL:     "https://chatgpt.com/backend-api/codex",
+				ActiveModel: "gpt-5.3-codex",
+				Models: []string{
+					"gpt-5.3-codex",
+					"gpt-4o",
+					"o3-mini",
+				},
 			},
 			"ollama": {
 				Name:        "Ollama",
@@ -444,9 +457,40 @@ func (c Config) Configured() bool {
 
 // Configured indica si el proveedor tiene endpoint, modelo y credenciales.
 func (p ProviderConfig) Configured() bool {
-	return strings.TrimSpace(p.BaseURL) != "" &&
-		strings.TrimSpace(p.ActiveModel) != "" &&
-		(strings.TrimSpace(p.APIKey) != "" || IsLocal(p.BaseURL))
+	if strings.TrimSpace(p.BaseURL) == "" || strings.TrimSpace(p.ActiveModel) == "" {
+		return false
+	}
+	if IsLocal(p.BaseURL) {
+		return true
+	}
+	if strings.TrimSpace(p.APIKey) != "" || strings.TrimSpace(p.RefreshToken) != "" {
+		return true
+	}
+	if IsCodex(p.BaseURL) {
+		return hasLocalCodexAuth()
+	}
+	return false
+}
+
+// hasLocalCodexAuth comprueba de forma segura si existe una sesión previa en ~/.codex/auth.json.
+func hasLocalCodexAuth() bool {
+	if p := os.Getenv("CODEX_HOME"); p != "" {
+		if _, err := os.Stat(filepath.Join(p, "auth.json")); err == nil {
+			return true
+		}
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return false
+	}
+	_, err = os.Stat(filepath.Join(home, ".codex", "auth.json"))
+	return err == nil
+}
+
+// IsCodex indica si la URL o el proveedor apunta al backend de suscripción de Codex/ChatGPT.
+func IsCodex(baseURL string) bool {
+	lower := strings.ToLower(baseURL)
+	return strings.Contains(lower, "chatgpt.com/backend-api/codex") || strings.Contains(lower, "codex")
 }
 
 // Provider devuelve el nombre legible del proveedor activo.
@@ -517,6 +561,8 @@ func DisplayName(key string) string {
 		return "OpenRouter"
 	case "openai":
 		return "OpenAI"
+	case "codex":
+		return "Codex (ChatGPT)"
 	case "ollama":
 		return "Ollama"
 	default:
@@ -542,6 +588,8 @@ func inferProvider(baseURL string) (key, name string) {
 		return "deepinfra", "DeepInfra"
 	case strings.Contains(lower, "openrouter"):
 		return "openrouter", "OpenRouter"
+	case strings.Contains(lower, "chatgpt.com/backend-api/codex") || strings.Contains(lower, "codex"):
+		return "codex", "Codex (ChatGPT)"
 	case strings.Contains(lower, "api.openai.com"):
 		return "openai", "OpenAI"
 	case IsLocal(baseURL):

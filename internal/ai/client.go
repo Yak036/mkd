@@ -23,6 +23,7 @@ import (
 
 	openai "github.com/sashabaranov/go-openai"
 
+	"github.com/Yak036/mkd/internal/codex"
 	"github.com/Yak036/mkd/internal/config"
 )
 
@@ -48,7 +49,7 @@ type Chunk struct {
 	Err     error
 }
 
-// Client envuelve go-openai para el proveedor y modelo activos.
+// Client envuelve go-openai y el transporte para el proveedor y modelo activos.
 type Client struct {
 	api          *openai.Client
 	ProviderKey  string
@@ -56,6 +57,9 @@ type Client struct {
 	Model        string
 	BaseURL      string
 	APIKey       string
+	RefreshToken string
+	AccountID    string
+	TokenExpires int64
 	SystemPrompt string
 	configured   bool
 }
@@ -69,6 +73,33 @@ func New(cfg config.Config) (*Client, error) {
 	}
 
 	apiKey := provider.APIKey
+	refreshToken := provider.RefreshToken
+	accountID := provider.AccountID
+	tokenExpires := provider.TokenExpires
+
+	// Si es proveedor Codex o apunta al backend de Codex
+	isCodex := cfg.ActiveProvider == "codex" || config.IsCodex(provider.BaseURL)
+	if isCodex {
+		// Si no tiene credenciales en config, intenta importar desde ~/.codex/auth.json
+		if apiKey == "" && refreshToken == "" {
+			if local, err := codex.LoadLocalAuth(); err == nil {
+				apiKey = local.AccessToken
+				refreshToken = local.RefreshToken
+				if accountID == "" {
+					accountID = local.AccountID
+				}
+				if tokenExpires == 0 {
+					tokenExpires = local.ExpiresAt
+				}
+				provider.APIKey = apiKey
+				provider.RefreshToken = refreshToken
+				provider.AccountID = accountID
+				provider.TokenExpires = tokenExpires
+				cfg.Providers[cfg.ActiveProvider] = provider
+			}
+		}
+	}
+
 	if apiKey == "" {
 		// Ollama y servidores locales ignoran la clave, pero go-openai
 		// necesita un valor no vacío para la cabecera Authorization.
@@ -87,6 +118,9 @@ func New(cfg config.Config) (*Client, error) {
 		Model:        provider.ActiveModel,
 		BaseURL:      provider.BaseURL,
 		APIKey:       provider.APIKey,
+		RefreshToken: provider.RefreshToken,
+		AccountID:    provider.AccountID,
+		TokenExpires: provider.TokenExpires,
 		SystemPrompt: cfg.SystemPrompt,
 		configured:   provider.Configured(),
 	}, nil
@@ -120,6 +154,60 @@ func (c *Client) Ready() bool {
 	return c.configured
 }
 
+// isCodex indica si el cliente utiliza el protocolo de suscripción de Codex.
+func (c *Client) isCodex() bool {
+	return c.ProviderKey == "codex" || config.IsCodex(c.BaseURL)
+}
+
+// ensureCodexAuth comprueba la validez del token y lo refresca si está próximo a expirar.
+func (c *Client) ensureCodexAuth(ctx context.Context) (accessToken, accountID string, err error) {
+	if !c.isCodex() {
+		return c.APIKey, "", nil
+	}
+
+	now := time.Now().Unix()
+	if c.APIKey != "" && (c.TokenExpires == 0 || c.TokenExpires > now+60) {
+		return c.APIKey, c.AccountID, nil
+	}
+
+	// Si tenemos refresh_token, intentamos refrescar contra OpenAI
+	if c.RefreshToken != "" {
+		newBundle, err := codex.RefreshAccessToken(ctx, c.RefreshToken)
+		if err == nil && newBundle.AccessToken != "" {
+			c.APIKey = newBundle.AccessToken
+			c.RefreshToken = newBundle.RefreshToken
+			if newBundle.AccountID != "" {
+				c.AccountID = newBundle.AccountID
+			}
+			c.TokenExpires = newBundle.ExpiresAt
+
+			// Guardar de forma asíncrona en config.json y ~/.codex/auth.json
+			go func() {
+				if cfg, err := config.LoadFile(); err == nil {
+					if p, ok := cfg.Providers[c.ProviderKey]; ok {
+						p.APIKey = newBundle.AccessToken
+						p.RefreshToken = newBundle.RefreshToken
+						p.AccountID = c.AccountID
+						p.TokenExpires = newBundle.ExpiresAt
+						cfg.Providers[c.ProviderKey] = p
+						_, _ = config.Save(cfg)
+					}
+				}
+				_ = codex.SaveLocalAuth(newBundle)
+			}()
+
+			return c.APIKey, c.AccountID, nil
+		}
+	}
+
+	// Si no se pudo refrescar pero hay APIKey manual en memoria, se intenta
+	if c.APIKey != "" {
+		return c.APIKey, c.AccountID, nil
+	}
+
+	return "", "", errors.New("no hay sesión activa de Codex: inicia sesión con `mkd auth codex` o importa con Ctrl+I en Ctrl+K")
+}
+
 // Stream lanza la petición y devuelve un canal con la respuesta incremental.
 func (c *Client) Stream(ctx context.Context, system string, history []Message) (<-chan Chunk, error) {
 	return c.StreamMessages(ctx, c.messages(system, history))
@@ -130,6 +218,40 @@ func (c *Client) Stream(ctx context.Context, system string, history []Message) (
 func (c *Client) StreamMessages(ctx context.Context, messages []openai.ChatCompletionMessage) (<-chan Chunk, error) {
 	if !c.Ready() {
 		return nil, ErrNotConfigured
+	}
+
+	if c.isCodex() {
+		token, accountID, err := c.ensureCodexAuth(ctx)
+		if err != nil {
+			return nil, err
+		}
+		events, err := codex.StreamResponses(ctx, codex.Request{
+			BaseURL:      c.BaseURL,
+			AccessToken:  token,
+			AccountID:    accountID,
+			Model:        c.Model,
+			Instructions: c.SystemPrompt,
+			Messages:     messages,
+		})
+		if err != nil {
+			return nil, err
+		}
+		out := make(chan Chunk, 64)
+		go func() {
+			defer close(out)
+			for ev := range events {
+				if ev.Err != nil {
+					sendChunk(ctx, out, Chunk{Err: ev.Err})
+					return
+				}
+				if ev.DeltaContent != "" {
+					if !sendChunk(ctx, out, Chunk{Content: ev.DeltaContent}) {
+						return
+					}
+				}
+			}
+		}()
+		return out, nil
 	}
 
 	stream, err := c.api.CreateChatCompletionStream(ctx, openai.ChatCompletionRequest{
@@ -177,6 +299,41 @@ func (c *Client) StreamMessages(ctx context.Context, messages []openai.ChatCompl
 func (c *Client) StreamWithTools(ctx context.Context, messages []openai.ChatCompletionMessage, tools []openai.Tool) (<-chan Chunk, error) {
 	if !c.Ready() {
 		return nil, ErrNotConfigured
+	}
+
+	if c.isCodex() {
+		token, accountID, err := c.ensureCodexAuth(ctx)
+		if err != nil {
+			return nil, err
+		}
+		events, err := codex.StreamResponses(ctx, codex.Request{
+			BaseURL:      c.BaseURL,
+			AccessToken:  token,
+			AccountID:    accountID,
+			Model:        c.Model,
+			Instructions: c.SystemPrompt,
+			Messages:     messages,
+			Tools:        tools,
+		})
+		if err != nil {
+			return nil, err
+		}
+		out := make(chan Chunk, 64)
+		go func() {
+			defer close(out)
+			for ev := range events {
+				if ev.Err != nil {
+					sendChunk(ctx, out, Chunk{Err: ev.Err})
+					return
+				}
+				if ev.DeltaContent != "" {
+					if !sendChunk(ctx, out, Chunk{Content: ev.DeltaContent}) {
+						return
+					}
+				}
+			}
+		}()
+		return out, nil
 	}
 
 	stream, err := c.api.CreateChatCompletionStream(ctx, openai.ChatCompletionRequest{
@@ -231,6 +388,44 @@ func (c *Client) CompleteMessagesTools(ctx context.Context, messages []openai.Ch
 	if !c.Ready() {
 		return openai.ChatCompletionMessage{}, ErrNotConfigured
 	}
+
+	if c.isCodex() {
+		token, accountID, err := c.ensureCodexAuth(ctx)
+		if err != nil {
+			return openai.ChatCompletionMessage{}, err
+		}
+		events, err := codex.StreamResponses(ctx, codex.Request{
+			BaseURL:      c.BaseURL,
+			AccessToken:  token,
+			AccountID:    accountID,
+			Model:        c.Model,
+			Instructions: c.SystemPrompt,
+			Messages:     messages,
+			Tools:        tools,
+		})
+		if err != nil {
+			return openai.ChatCompletionMessage{}, err
+		}
+		var content strings.Builder
+		var toolCalls []openai.ToolCall
+		for ev := range events {
+			if ev.Err != nil {
+				return openai.ChatCompletionMessage{}, ev.Err
+			}
+			if ev.DeltaContent != "" {
+				content.WriteString(ev.DeltaContent)
+			}
+			if len(ev.ToolCalls) > 0 {
+				toolCalls = append(toolCalls, ev.ToolCalls...)
+			}
+		}
+		return openai.ChatCompletionMessage{
+			Role:      openai.ChatMessageRoleAssistant,
+			Content:   content.String(),
+			ToolCalls: toolCalls,
+		}, nil
+	}
+
 	response, err := c.api.CreateChatCompletion(ctx, openai.ChatCompletionRequest{
 		Model:    c.Model,
 		Messages: messages,
@@ -256,6 +451,14 @@ func (c *Client) CompleteMessages(ctx context.Context, messages []openai.ChatCom
 		return "", ErrNotConfigured
 	}
 
+	if c.isCodex() {
+		msg, err := c.CompleteMessagesTools(ctx, messages, nil)
+		if err != nil {
+			return "", err
+		}
+		return msg.Content, nil
+	}
+
 	response, err := c.api.CreateChatCompletion(ctx, openai.ChatCompletionRequest{
 		Model:    c.Model,
 		Messages: messages,
@@ -269,13 +472,16 @@ func (c *Client) CompleteMessages(ctx context.Context, messages []openai.ChatCom
 	return response.Choices[0].Message.Content, nil
 }
 
-// FetchAvailableModels consulta GET /v1/models y devuelve IDs ordenados.
-//
-// Algunos proveedores (DeepInfra) exponen cientos de modelos mezclando imagen,
-// embeddings y versiones deprecadas. Si detectamos su catálogo público en
-// /models/list lo usamos para quedarnos solo con los de texto activos; si no,
-// devolvemos la lista del endpoint OpenAI tal cual.
+// FetchAvailableModels consulta los modelos disponibles para el proveedor activo.
 func (c *Client) FetchAvailableModels(ctx context.Context) ([]string, error) {
+	if c.isCodex() {
+		token, accountID, err := c.ensureCodexAuth(ctx)
+		if err != nil {
+			return nil, err
+		}
+		return codex.FetchModels(ctx, c.BaseURL, token, accountID)
+	}
+
 	if c.BaseURL == "" || (c.APIKey == "" && !config.IsLocal(c.BaseURL)) {
 		return nil, ErrNotConfigured
 	}

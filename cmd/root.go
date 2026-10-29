@@ -111,6 +111,7 @@ func init() {
 	rootCmd.PersistentFlags().StringVarP(&flagSystem, "system", "s", "", "system prompt (sobreescribe la configuración)")
 
 	rootCmd.AddCommand(askCmd)
+	rootCmd.AddCommand(authCmd)
 	rootCmd.AddCommand(chatCmd)
 	rootCmd.AddCommand(configCmd)
 	rootCmd.AddCommand(versionCmd)

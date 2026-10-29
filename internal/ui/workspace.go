@@ -518,6 +518,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case modelsFetchedMsg:
 		return m.handleModelsFetched(msg)
 
+	case codexAuthDoneMsg:
+		return m.handleCodexAuthDone(msg)
+
 	case compactDoneMsg:
 		return m.handleCompactDone(msg)
 
@@ -1533,6 +1536,8 @@ func (m Model) runPaletteAction(id string) (Model, tea.Cmd) {
 		return m.openModelsModal()
 	case "provider":
 		return m.openProviderModal()
+	case "codex":
+		return m.openProviderCodexModal()
 	case "fetch":
 		var cmd tea.Cmd
 		m, cmd = m.openModelsModal()

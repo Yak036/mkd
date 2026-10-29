@@ -15,6 +15,7 @@ import (
 	"github.com/charmbracelet/x/cellbuf"
 
 	"github.com/Yak036/mkd/internal/ai"
+	"github.com/Yak036/mkd/internal/codex"
 	"github.com/Yak036/mkd/internal/config"
 	"github.com/Yak036/mkd/internal/storage"
 )
@@ -104,6 +105,26 @@ func (m Model) openProviderModal() (Model, tea.Cmd) {
 	return m, m.focusProviderField(m.modal.provider.focus)
 }
 
+func (m Model) openProviderCodexModal() (Model, tea.Cmd) {
+	m.hideSlashMenu()
+	m.modal.kind = modalProvider
+	m.modal.provider = newProviderModal(m.cfg)
+	if idx := indexOf(m.modal.provider.keys, "codex"); idx >= 0 {
+		m.modal.provider.index = idx
+		p := m.cfg.Providers["codex"]
+		m.modal.provider.baseURL.SetValue(p.BaseURL)
+		m.modal.provider.apiKey.SetValue(p.APIKey)
+	}
+	m.textarea.Blur()
+	m.resizeModals()
+	return m, m.focusProviderField(m.modal.provider.focus)
+}
+
+type codexAuthDoneMsg struct {
+	bundle codex.TokenBundle
+	err    error
+}
+
 func (m *Model) focusProviderField(index int) tea.Cmd {
 	p := &m.modal.provider
 	p.focus = index
@@ -144,6 +165,43 @@ func (m Model) updateProviderModal(msg tea.KeyMsg) (Model, tea.Cmd) {
 		return m, nil
 	case key.Matches(msg, keyEnter):
 		return m.saveProviderModal()
+	case msg.String() == "ctrl+i":
+		key := ""
+		if len(p.keys) > 0 {
+			key = p.keys[p.index]
+		}
+		if key == "codex" {
+			bundle, err := codex.LoadLocalAuth()
+			if err != nil {
+				p.err = "no se pudo leer ~/.codex/auth.json: " + err.Error()
+				return m, nil
+			}
+			prov := m.cfg.Providers[key]
+			prov.APIKey = bundle.AccessToken
+			prov.RefreshToken = bundle.RefreshToken
+			prov.AccountID = bundle.AccountID
+			prov.TokenExpires = bundle.ExpiresAt
+			m.cfg.Providers[key] = prov
+			p.apiKey.SetValue(bundle.AccessToken)
+			p.err = ""
+			m.notice = "✓ Sesión de Codex importada de ~/.codex/auth.json"
+			_ = m.persistConfig()
+			return m, fetchModelsCmd(m.cfg, key)
+		}
+	case msg.String() == "ctrl+o":
+		key := ""
+		if len(p.keys) > 0 {
+			key = p.keys[p.index]
+		}
+		if key == "codex" {
+			p.err = "Iniciando autenticación en navegador (puerto 1455)…"
+			return m, func() tea.Msg {
+				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+				defer cancel()
+				bundle, err := codex.LoginPKCE(ctx, nil)
+				return codexAuthDoneMsg{bundle: bundle, err: err}
+			}
+		}
 	case p.focus == 0 && (msg.String() == "left" || msg.String() == "right"):
 		delta := -1
 		if msg.String() == "right" {
@@ -257,6 +315,24 @@ func (m Model) providerModalView() string {
 	b.WriteString(p.apiKey.View())
 	b.WriteString("\n")
 
+	if key == "codex" {
+		b.WriteString("\n")
+		if provider.APIKey != "" || provider.RefreshToken != "" {
+			b.WriteString(successStyle.Render("✓ Suscripción activa configurada"))
+			if provider.AccountID != "" {
+				b.WriteString(mutedStyle.Render(fmt.Sprintf(" (Cuenta: %s)", provider.AccountID)))
+			}
+		} else if local, err := codex.LoadLocalAuth(); err == nil {
+			b.WriteString(titleCyanStyle.Render("󰌆 Sesión detectada en ~/.codex/auth.json (pulsa Ctrl+I para importarla)"))
+			if local.AccountID != "" {
+				b.WriteString(mutedStyle.Render(fmt.Sprintf(" [%s]", local.AccountID)))
+			}
+		} else {
+			b.WriteString(titleCyanStyle.Render("󰌆 Pulsa Ctrl+O para iniciar sesión con ChatGPT en el navegador"))
+		}
+		b.WriteString("\n")
+	}
+
 	if p.err != "" {
 		b.WriteString("\n")
 		b.WriteString(errorStyle.Render(p.err))
@@ -264,6 +340,10 @@ func (m Model) providerModalView() string {
 	}
 
 	b.WriteString("\n")
+	if key == "codex" {
+		b.WriteString(titleCyanStyle.Render("Ctrl+O login navegador · Ctrl+I importar ~/.codex/auth.json"))
+		b.WriteString("\n")
+	}
 	b.WriteString(mutedStyle.Render("Tab/↑↓ campo · ◀/▶ proveedor · Ctrl+U ver/ocultar key"))
 	b.WriteString("\n")
 	b.WriteString(mutedStyle.Render("Enter guardar y abrir modelos · Esc cancelar"))
@@ -654,6 +734,26 @@ func (m Model) handleModelsFetched(msg modelsFetchedMsg) (Model, tea.Cmd) {
 	return m, nil
 }
 
+func (m Model) handleCodexAuthDone(msg codexAuthDoneMsg) (Model, tea.Cmd) {
+	if msg.err != nil {
+		m.modal.provider.err = fmt.Sprintf("Error de autenticación: %v", msg.err)
+		return m, nil
+	}
+	key := "codex"
+	p := m.cfg.Providers[key]
+	p.APIKey = msg.bundle.AccessToken
+	p.RefreshToken = msg.bundle.RefreshToken
+	p.AccountID = msg.bundle.AccountID
+	p.TokenExpires = msg.bundle.ExpiresAt
+	m.cfg.Providers[key] = p
+	m.modal.provider.apiKey.SetValue(msg.bundle.AccessToken)
+	m.modal.provider.err = ""
+	_ = codex.SaveLocalAuth(msg.bundle)
+	_ = m.persistConfig()
+	m.notice = "✓ Autenticación de Codex completada exitosamente."
+	return m, fetchModelsCmd(m.cfg, key)
+}
+
 func (m Model) modelRows() int {
 	return min(10, max(3, m.modalContentHeight()-14))
 }
@@ -855,6 +955,7 @@ type paletteAction struct {
 var paletteActions = []paletteAction{
 	{ID: "model", Name: "Cambiar / agregar modelo", Description: "Ctrl+M · modelo · gestor multi-modelo"},
 	{ID: "provider", Name: "Configurar proveedor / API key", Description: "Ctrl+K · keys · credenciales"},
+	{ID: "codex", Name: "Autenticación Codex (ChatGPT)", Description: "OAuth · suscripción · ChatGPT Plus/Pro"},
 	{ID: "fetch", Name: "Sincronizar modelos desde API", Description: "GET /v1/models · sincronizar"},
 	{ID: "add", Name: "Adjuntar archivo", Description: "/add <ruta> · archivo · contexto"},
 	{ID: "system", Name: "Editar system prompt", Description: "/system · sistema · prompt"},
