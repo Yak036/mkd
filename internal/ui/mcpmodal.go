@@ -51,11 +51,12 @@ type mcpModal struct {
 	err      string
 
 	// Modo alta de servidor.
-	creating bool
-	field    mcpFormField
-	name     textinput.Model
-	command  textinput.Model
-	args     textinput.Model
+	creating         bool
+	overwritePending bool
+	field            mcpFormField
+	name             textinput.Model
+	command          textinput.Model
+	args             textinput.Model
 
 	loading bool
 }
@@ -104,7 +105,7 @@ func (m Model) updateMCPModal(msg tea.KeyMsg) (Model, tea.Cmd) {
 
 	switch {
 	case key.Matches(msg, keyQuit):
-		return m.quit()
+		return m.openQuitConfirmModal()
 	case key.Matches(msg, keyEsc):
 		return m.closeModal()
 	case msg.String() == "ctrl+n":
@@ -141,11 +142,28 @@ func (m Model) updateMCPModal(msg tea.KeyMsg) (Model, tea.Cmd) {
 func (m Model) updateMCPForm(msg tea.KeyMsg) (Model, tea.Cmd) {
 	mm := &m.modal.mcp
 
+	// Si hay una sobrescritura pendiente, esperamos confirmación explícita con 'y'.
+	// Por defecto seguro, Enter o Esc cancelan la sobrescritura.
+	if mm.overwritePending {
+		switch {
+		case msg.String() == "y" || msg.String() == "Y":
+			return m.commitSaveMCPServer()
+		case key.Matches(msg, keyEsc) || key.Matches(msg, keyEnter) || msg.String() == "n" || msg.String() == "N":
+			mm.overwritePending = false
+			mm.err = "Sobrescritura cancelada."
+			return m, nil
+		default:
+			mm.overwritePending = false
+			return m, nil
+		}
+	}
+
 	switch {
 	case key.Matches(msg, keyQuit):
-		return m.quit()
+		return m.openQuitConfirmModal()
 	case key.Matches(msg, keyEsc):
 		mm.creating = false
+		mm.overwritePending = false
 		mm.err = ""
 		return m, nil
 	case msg.String() == "tab" || msg.String() == "down":
@@ -186,12 +204,11 @@ func (m *Model) nextFormField(delta int) tea.Cmd {
 	}
 }
 
-// saveNewMCPServer valida, persiste y conecta el servidor nuevo.
+// saveNewMCPServer valida, comprueba colisiones de nombres y solicita confirmación si ya existe.
 func (m Model) saveNewMCPServer() (Model, tea.Cmd) {
 	mm := &m.modal.mcp
 	name := strings.TrimSpace(mm.name.Value())
 	command := strings.TrimSpace(mm.command.Value())
-	args := strings.Fields(mm.args.Value())
 
 	if name == "" || command == "" {
 		mm.err = "Nombre y comando son obligatorios."
@@ -201,6 +218,23 @@ func (m Model) saveNewMCPServer() (Model, tea.Cmd) {
 		mm.err = "Gestor MCP no disponible."
 		return m, nil
 	}
+
+	// Comprobar si ya existe un servidor con ese nombre antes de sobrescribir
+	if _, exists := m.cfg.MCPServers[name]; exists && !mm.overwritePending {
+		mm.overwritePending = true
+		mm.err = fmt.Sprintf("El servidor MCP '%s' ya existe.", name)
+		return m, nil
+	}
+
+	return m.commitSaveMCPServer()
+}
+
+// commitSaveMCPServer persiste y conecta definitivamente el servidor nuevo o sobrescrito.
+func (m Model) commitSaveMCPServer() (Model, tea.Cmd) {
+	mm := &m.modal.mcp
+	name := strings.TrimSpace(mm.name.Value())
+	command := strings.TrimSpace(mm.command.Value())
+	args := strings.Fields(mm.args.Value())
 
 	server := config.MCPServerConfig{Command: command, Args: args, Enabled: true}
 	if m.cfg.MCPServers == nil {
@@ -215,6 +249,7 @@ func (m Model) saveNewMCPServer() (Model, tea.Cmd) {
 	m.mcp.UpdateSpecs(m.cfg.MCPServers)
 
 	mm.creating = false
+	mm.overwritePending = false
 	mm.err = ""
 	mm.status = "✓ Servidor agregado: " + name
 	mm.servers = m.mcp.Statuses()
@@ -439,12 +474,20 @@ func (m Model) mcpModalView() string {
 
 	b.WriteString("\n")
 	if mm.creating {
-		b.WriteString(diffHintStyle.Render("[Tab]"))
-		b.WriteString(textStyle.Render(" siguiente campo   "))
-		b.WriteString(diffHintStyle.Render("[Ctrl+S]"))
-		b.WriteString(textStyle.Render(" Guardar y conectar   "))
-		b.WriteString(diffHintStyle.Render("[Esc]"))
-		b.WriteString(textStyle.Render(" Cancelar"))
+		if mm.overwritePending {
+			b.WriteString(warnStyle.Render(fmt.Sprintf("⚠ El servidor [%s] ya existe. ¿Sobrescribir? ", strings.TrimSpace(mm.name.Value()))))
+			b.WriteString(diffHintStyle.Render("[y]"))
+			b.WriteString(textStyle.Render(" Confirmar   "))
+			b.WriteString(diffHintStyle.Render("[Esc / Enter]"))
+			b.WriteString(textStyle.Render(" Cancelar"))
+		} else {
+			b.WriteString(diffHintStyle.Render("[Tab]"))
+			b.WriteString(textStyle.Render(" siguiente campo   "))
+			b.WriteString(diffHintStyle.Render("[Ctrl+S]"))
+			b.WriteString(textStyle.Render(" Guardar y conectar   "))
+			b.WriteString(diffHintStyle.Render("[Esc]"))
+			b.WriteString(textStyle.Render(" Cancelar"))
+		}
 	} else {
 		b.WriteString(diffHintStyle.Render("[Space/Enter]"))
 		b.WriteString(textStyle.Render(" Activar/Desactivar   "))

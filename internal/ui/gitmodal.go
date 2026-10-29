@@ -215,7 +215,7 @@ func (m Model) updateCommitModal(msg tea.KeyMsg) (Model, tea.Cmd) {
 
 	switch {
 	case key.Matches(msg, keyQuit):
-		return m.quit()
+		return m.openQuitConfirmModal()
 	case key.Matches(msg, keyEsc):
 		m.modal.kind = modalNone
 		m.refresh()

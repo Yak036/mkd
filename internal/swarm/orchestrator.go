@@ -52,9 +52,7 @@ const (
 	MaxRounds = 24
 	// MaxParallel acota cuántos sub-agentes corren a la vez en delegate_parallel.
 	MaxParallel = 4
-	// SubAgentTimeout acota una delegación individual.
-	SubAgentTimeout = 8 * time.Minute
-	// OrchestratorTimeout acota la misión completa.
+	// OrchestratorTimeout acota la misión completa si se desea acotar externamente.
 	OrchestratorTimeout = 30 * time.Minute
 	// maxReportBytes recorta el reporte que vuelve al orquestador.
 	maxReportBytes = 12 << 10
@@ -298,13 +296,22 @@ func OrchestratorSystemPrompt(base string, agents map[string]config.SubAgentProf
 	var b strings.Builder
 	b.WriteString(strings.TrimSpace(base))
 	b.WriteString("\n\n")
-	b.WriteString("Estás en MODO SWARM: eres el Orquestador de un equipo de sub-agentes.\n")
-	b.WriteString("Tu trabajo: descomponer la misión, delegar en sub-agentes y consolidar sus reportes.\n")
-	b.WriteString("- Usa delegate_task para una subtarea de un único sub-agente.\n")
-	b.WriteString("- Usa delegate_parallel cuando varias subtareas sean independientes.\n")
-	b.WriteString("- Cada sub-agente tiene su propio contexto aislado: incluye en 'instructions' todo el contexto necesario.\n")
-	b.WriteString("- No ejecutes tú el trabajo pesado si puedes delegarlo; investiga solo lo justo para planificar.\n")
-	b.WriteString("- Cierra con una síntesis clara: qué hizo cada sub-agente y el resultado consolidado.\n\n")
+	b.WriteString("Estás en MODO SWARM: eres el Orquestador Lead de un equipo de sub-agentes.\n")
+	b.WriteString("Tu trabajo: descomponer la misión en fases lógicas, delegar en sub-agentes especializados y consolidar sus reportes.\n\n")
+	b.WriteString("REGLAS FUNDAMENTALES DE ORQUESTACIÓN Y PIPELINE:\n")
+	b.WriteString("1. SECUENCIA DESARROLLO → QA (ESTRICTA):\n")
+	b.WriteString("   - NUNCA lances a un QA ('qa', 'code-tester', 'api-tester', 'ui-tester') en paralelo con los desarrolladores ('coder', 'frontend', 'backend') para revisar el mismo trabajo.\n")
+	b.WriteString("   - QA NO puede auditar ni verificar código que aún no ha sido escrito o modificado.\n")
+	b.WriteString("   - FASE 1 (IMPLEMENTACIÓN): Delega primero en 'coder' y/o 'frontend'/'backend'. Si son módulos independientes, usa delegate_parallel entre ellos.\n")
+	b.WriteString("   - FASE 2 (VALIDACIÓN QA): SOLO después de que los implementadores terminen y entreguen su reporte de cambios, delega en 'qa' o 'code-tester' para que audite los cambios, ejecute tests y busque regresiones.\n")
+	b.WriteString("2. DELEGACIÓN PARALELA vs INDIVIDUAL:\n")
+	b.WriteString("   - Usa delegate_task para tareas secuenciales o dependientes de otra anterior.\n")
+	b.WriteString("   - Usa delegate_parallel ÚNICAMENTE para tareas verdaderamente independientes que no esperan el resultado de otra en el mismo lote.\n")
+	b.WriteString("3. CONTEXTO COMPLETO EN INSTRUCCIONES:\n")
+	b.WriteString("   - Cada sub-agente tiene su propio contexto aislado. En 'instructions', dale órdenes claras, autónomas y específicas para su rol.\n")
+	b.WriteString("   - Al delegar a QA en la Fase 2, incluye en 'instructions' el detalle exacto de los archivos y cambios que hicieron los desarrolladores.\n")
+	b.WriteString("4. SÍNTESIS FINAL:\n")
+	b.WriteString("   - Cierra siempre con una síntesis clara y completa del resultado consolidado para el usuario.\n\n")
 	b.WriteString("Sub-agentes disponibles (usa exactamente estos IDs):\n")
 	b.WriteString(Roster(agents))
 	b.WriteString("\n")
@@ -329,7 +336,7 @@ func DelegateTools() []openai.Tool {
 }`)),
 		agent.FunctionTool(ToolDelegateParallel,
 			"Lanza VARIOS sub-agentes en paralelo (goroutines) y devuelve todos sus reportes. "+
-				"Úsalo solo para subtareas independientes entre sí.",
+				"Úsalo solo para subtareas independientes entre sí. NUNCA lances a un QA en paralelo con un implementador: QA va después de que el implementador termine.",
 			json.RawMessage(`{
   "type":"object",
   "properties":{
@@ -428,11 +435,26 @@ func cleanPaths(paths []string) []string {
 // ---------------------------------------------------------------------------
 
 // Delegate ejecuta una task y devuelve su reporte. Propaga cancelación.
-func (o *Orchestrator) Delegate(ctx context.Context, task Task) Report {
+func (o *Orchestrator) Delegate(ctx context.Context, task Task) (rep Report) {
+	defer func() {
+		if r := recover(); r != nil {
+			err := fmt.Errorf("pánico interno en sub-agente %s: %v", task.AgentID, r)
+			o.emit(SwarmEvent{
+				Kind:         EventAgentError,
+				AgentID:      task.AgentID,
+				Task:         task.Title,
+				Instructions: task.Instrucciones,
+				Text:         err.Error(),
+				Status:       StatusError,
+			})
+			rep = Report{AgentID: task.AgentID, Task: task.Title, Err: err}
+		}
+	}()
+
 	profile, ok := FindProfile(o.cfg.SubAgents, task.AgentID)
 	if !ok {
 		err := fmt.Errorf("sub-agente %q no existe", task.AgentID)
-		o.emit(SwarmEvent{Kind: EventAgentError, AgentID: task.AgentID, Task: task.Title, Text: err.Error(), Status: StatusError})
+		o.emit(SwarmEvent{Kind: EventAgentError, AgentID: task.AgentID, Task: task.Title, Instructions: task.Instrucciones, Text: err.Error(), Status: StatusError})
 		return Report{AgentID: task.AgentID, Task: task.Title, Err: err}
 	}
 	if !profile.Enabled {
@@ -443,20 +465,22 @@ func (o *Orchestrator) Delegate(ctx context.Context, task Task) Report {
 	tab := o.tabIndex(profile.ID)
 	o.emit(SwarmEvent{
 		Kind: EventAgentStarted, AgentID: profile.ID, Task: task.Title,
-		Status: StatusRunning, Index: tab,
+		Instructions: task.Instrucciones,
+		Status:       StatusRunning, Index: tab,
 	})
 
 	start := time.Now()
-	subCtx, cancel := context.WithTimeout(ctx, SubAgentTimeout)
-	defer cancel()
-
-	report := o.runSubAgent(subCtx, profile, task, tab)
+	// No imponemos un timeout rígido por sub-agente para no truncar modelos con deep reasoning
+	// ni abortar tareas mientras el usuario revisa y aprueba diffs en el modal HITL.
+	// La cancelación está gobernada por el ctx general de la misión (manejado por el usuario con Esc/Ctrl+C).
+	report := o.runSubAgent(ctx, profile, task, tab)
 	report.Duration = time.Since(start)
 
 	if report.Err != nil {
 		o.emit(SwarmEvent{
 			Kind: EventAgentError, AgentID: profile.ID, Task: task.Title,
-			Text: report.Err.Error(), Status: StatusError, Duration: report.Duration,
+			Instructions: task.Instrucciones,
+			Text:         report.Err.Error(), Status: StatusError, Duration: report.Duration,
 			Tokens: report.Tokens, Index: tab,
 		})
 		return report
@@ -464,7 +488,8 @@ func (o *Orchestrator) Delegate(ctx context.Context, task Task) Report {
 
 	o.emit(SwarmEvent{
 		Kind: EventAgentCompleted, AgentID: profile.ID, Task: task.Title,
-		Status: StatusDone, Duration: report.Duration, Tokens: report.Tokens, Index: tab,
+		Instructions: task.Instrucciones,
+		Status:       StatusDone, Duration: report.Duration, Tokens: report.Tokens, Index: tab,
 	})
 	return report
 }
@@ -480,7 +505,7 @@ func (o *Orchestrator) DelegateParallel(ctx context.Context, tasks []Task) []Rep
 		if profile, ok := FindProfile(o.cfg.SubAgents, task.AgentID); ok {
 			o.tabIndex(profile.ID)
 		}
-		o.emit(SwarmEvent{Kind: EventAgentQueued, AgentID: task.AgentID, Task: task.Title, Status: StatusQueued})
+		o.emit(SwarmEvent{Kind: EventAgentQueued, AgentID: task.AgentID, Task: task.Title, Instructions: task.Instrucciones, Status: StatusQueued})
 	}
 
 	reports := make([]Report, len(tasks))
@@ -490,6 +515,15 @@ func (o *Orchestrator) DelegateParallel(ctx context.Context, tasks []Task) []Rep
 		wg.Add(1)
 		go func(i int, task Task) {
 			defer wg.Done()
+			defer func() {
+				if r := recover(); r != nil {
+					reports[i] = Report{
+						AgentID: task.AgentID,
+						Task:    task.Title,
+						Err:     fmt.Errorf("pánico atrapado en tarea paralela: %v", r),
+					}
+				}
+			}()
 			sem <- struct{}{}
 			defer func() { <-sem }()
 			reports[i] = o.Delegate(ctx, task)

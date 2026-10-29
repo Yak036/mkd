@@ -50,20 +50,39 @@ func Read(p Proposal, cwd string) (string, error) {
 
 	start, end := readRange(p)
 	lines := strings.Split(strings.ReplaceAll(string(data), "\r\n", "\n"), "\n")
+	if len(lines) > 0 && lines[len(lines)-1] == "" {
+		lines = lines[:len(lines)-1]
+	}
+	totalLines := len(lines)
+	if totalLines == 0 {
+		return fmt.Sprintf("== %s (archivo vacío) ==\n", p.Path), nil
+	}
+
 	if start > 1 || end > 0 {
+		hasExplicitEnd := end > 0
 		if start < 1 {
 			start = 1
 		}
-		if end == 0 || end > len(lines) {
-			end = len(lines)
+		if hasExplicitEnd && end < 1 {
+			end = 1
 		}
-		if start > len(lines) {
-			return fmt.Sprintf("(el archivo %s no tiene línea %d)", p.Path, start), nil
+		// Solo si ambos extremos fueron explícitos y vienen invertidos:
+		if hasExplicitEnd && start > end {
+			start, end = end, start
+		}
+		if start > totalLines {
+			return fmt.Sprintf("(el archivo %s solo tiene %d líneas, start_line=%d)", p.Path, totalLines, start), nil
+		}
+		if !hasExplicitEnd || end > totalLines {
+			end = totalLines
+		}
+		if start-1 > end || start-1 >= totalLines {
+			return fmt.Sprintf("(rango de líneas inválido: %d-%d)", start, end), nil
 		}
 		lines = lines[start-1 : end]
 	} else {
 		start = 1
-		end = len(lines)
+		end = totalLines
 	}
 
 	var b strings.Builder

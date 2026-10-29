@@ -91,6 +91,10 @@ type agentModal struct {
 
 	// creating marca que el editor está creando un perfil nuevo.
 	creating bool
+	// deletePending evita borrar un perfil accidentalmente: Ctrl+D vuelve a confirmar.
+	deletePending bool
+	// discardPending evita perder cambios del editor al pulsar Esc.
+	discardPending bool
 }
 
 // newAgentModal construye el modal desde la configuración.
@@ -117,10 +121,28 @@ func (m Model) updateAgentModal(msg tea.KeyMsg) (Model, tea.Cmd) {
 		return m.updateAgentEditor(msg)
 	}
 
+	// Si hay una eliminación pendiente, esperamos confirmación explícita con 'y'.
+	// Por diseño seguro por defecto, Enter o Esc cancelan el borrado.
+	if am.deletePending {
+		switch {
+		case msg.String() == "y" || msg.String() == "Y":
+			// Confirmación recibida: procede con el borrado definitivo.
+			return m.deleteAgentProfile()
+		case key.Matches(msg, keyEsc) || key.Matches(msg, keyEnter) || msg.String() == "n" || msg.String() == "N":
+			// Cancelación explícita: desactiva el estado pending sin cerrar el modal.
+			am.deletePending = false
+			return m, nil
+		default:
+			// Cualquier otra tecla cancela el modo de confirmación por seguridad para no atrapar la UI.
+			am.deletePending = false
+			return m, nil
+		}
+	}
+
 	rows := m.agentRows()
 	switch {
 	case key.Matches(msg, keyQuit):
-		return m.quit()
+		return m.openQuitConfirmModal()
 	case key.Matches(msg, keyEsc):
 		return m.closeModal()
 	case msg.String() == "up":
@@ -140,7 +162,15 @@ func (m Model) updateAgentModal(msg tea.KeyMsg) (Model, tea.Cmd) {
 	case msg.String() == "ctrl+n":
 		return m.startNewAgentProfile()
 	case msg.String() == "ctrl+d":
-		return m.deleteAgentProfile()
+		// Ctrl+D activa el estado pendiente de eliminación tras validar que no sea el único agente.
+		if len(am.profiles) <= 1 {
+			am.err = "No se puede eliminar el único sub-agente restante"
+			return m, nil
+		}
+		am.deletePending = true
+		am.err = ""
+		am.status = ""
+		return m, nil
 	case msg.String() == "ctrl+y", msg.String() == "ctrl+c", msg.String() == "c", msg.String() == "y":
 		return m.copyAgentPrompt()
 	case key.Matches(msg, keyEnter), msg.String() == "tab":
@@ -224,9 +254,17 @@ func (m Model) toggleAgentProfile() (Model, tea.Cmd) {
 	return m, nil
 }
 
-// deleteAgentProfile elimina el perfil seleccionado.
+// deleteAgentProfile elimina el perfil seleccionado si no es el último restante.
 func (m Model) deleteAgentProfile() (Model, tea.Cmd) {
 	am := &m.modal.agents
+	am.deletePending = false // Reinicia el estado de confirmación pendiente
+
+	// Impide eliminar el último sub-agente para asegurar que el equipo nunca quede vacío.
+	if len(am.profiles) <= 1 {
+		am.err = "No se puede eliminar el único sub-agente restante"
+		return m, nil
+	}
+
 	profile, ok := am.selectedProfile()
 	if !ok {
 		return m, nil
@@ -236,9 +274,12 @@ func (m Model) deleteAgentProfile() (Model, tea.Cmd) {
 		am.err = "No se pudo eliminar " + profile.ID
 		return m, nil
 	}
+
+	oldAgents := m.cfg.SubAgents
 	m.cfg.SubAgents = agents
 	m.cfg.Normalize()
 	if err := m.persistConfig(); err != nil {
+		m.cfg.SubAgents = oldAgents
 		am.err = "No se pudo guardar: " + err.Error()
 		return m, nil
 	}
@@ -258,6 +299,8 @@ func (m Model) editAgentProfile() (Model, tea.Cmd) {
 	}
 	am.editing = profile
 	am.creating = false
+	am.deletePending = false
+	am.discardPending = false
 	am.mode = agentModeEdit
 	am.field = agentFieldName
 	am.status = ""
@@ -279,6 +322,8 @@ func (m Model) startNewAgentProfile() (Model, tea.Cmd) {
 		Enabled:      true,
 	}
 	am.creating = true
+	am.deletePending = false
+	am.discardPending = false
 	am.mode = agentModeEdit
 	am.field = agentFieldName
 	am.status = "Nuevo sub-agente: escribe un ID en el nombre (ej. reviewer)."
@@ -443,14 +488,68 @@ func (m *Model) focusAgentField() tea.Cmd {
 	}
 }
 
+// isAgentEditorDirty determina si el formulario de edición del sub-agente tiene cambios no guardados.
+func (m Model) isAgentEditorDirty() bool {
+	am := m.modal.agents
+	if am.creating {
+		return strings.TrimSpace(am.name.Value()) != "" ||
+			strings.TrimSpace(am.icon.Value()) != "" ||
+			strings.TrimSpace(am.color.Value()) != "" ||
+			strings.TrimSpace(am.model.Value()) != "" ||
+			strings.TrimSpace(am.prompt.Value()) != ""
+	}
+
+	p := am.editing
+	if strings.TrimSpace(am.name.Value()) != p.Name ||
+		strings.TrimSpace(am.icon.Value()) != p.Icon ||
+		strings.TrimSpace(am.color.Value()) != p.Color ||
+		strings.TrimSpace(am.model.Value()) != p.Model ||
+		strings.TrimSpace(am.prompt.Value()) != p.RolePrompt {
+		return true
+	}
+
+	currProv := ""
+	if am.providerIndex > 0 && am.providerIndex < len(am.providers) {
+		currProv = am.providers[am.providerIndex]
+	}
+	if currProv != p.Provider {
+		return true
+	}
+
+	return false
+}
+
 // updateAgentEditor procesa las teclas del editor.
 func (m Model) updateAgentEditor(msg tea.KeyMsg) (Model, tea.Cmd) {
 	am := &m.modal.agents
 
+	// Si hay confirmación pendiente para descartar cambios, evaluamos la respuesta.
+	// Por diseño seguro, Enter o Esc cancelan el descarte y mantienen al usuario en el editor.
+	if am.discardPending {
+		switch {
+		case msg.String() == "y" || msg.String() == "Y":
+			am.discardPending = false
+			am.mode = agentModeRoster
+			am.creating = false
+			am.err = ""
+			return m, nil
+		case key.Matches(msg, keyEsc) || key.Matches(msg, keyEnter) || msg.String() == "n" || msg.String() == "N":
+			am.discardPending = false
+			return m, nil
+		default:
+			am.discardPending = false
+			return m, nil
+		}
+	}
+
 	switch {
 	case key.Matches(msg, keyQuit):
-		return m.quit()
+		return m.openQuitConfirmModal()
 	case key.Matches(msg, keyEsc):
+		if m.isAgentEditorDirty() {
+			am.discardPending = true
+			return m, nil
+		}
 		am.mode = agentModeRoster
 		am.creating = false
 		am.err = ""
@@ -696,6 +795,8 @@ func (m Model) saveAgentProfile() (Model, tea.Cmd) {
 
 	am.mode = agentModeRoster
 	am.creating = false
+	am.discardPending = false
+	am.deletePending = false
 	am.err = ""
 	am.profiles = swarm.SortProfiles(m.cfg.SubAgents)
 	am.status = "✓ Sub-agente guardado: " + profile.ID
@@ -775,19 +876,32 @@ func (m Model) agentModalView() string {
 	}
 
 	b.WriteString("\n")
-	b.WriteString(diffHintStyle.Render("[Space]"))
-	b.WriteString(textStyle.Render(" Activar/Desactivar  "))
-	b.WriteString(diffHintStyle.Render("[Enter]"))
-	b.WriteString(textStyle.Render(" Editar  "))
-	b.WriteString(diffHintStyle.Render("[Ctrl+Y / c]"))
-	b.WriteString(textStyle.Render(" Copiar Prompt"))
-	b.WriteString("\n")
-	b.WriteString(diffHintStyle.Render("[Ctrl+N]"))
-	b.WriteString(textStyle.Render(" Nuevo  "))
-	b.WriteString(diffHintStyle.Render("[Ctrl+D]"))
-	b.WriteString(textStyle.Render(" Eliminar  "))
-	b.WriteString(diffHintStyle.Render("[Esc]"))
-	b.WriteString(textStyle.Render(" Cerrar"))
+	// Si hay una eliminación en curso, muestra el prompt de confirmación interactivo.
+	if am.deletePending {
+		targetID := ""
+		if profile, ok := am.selectedProfile(); ok {
+			targetID = profile.ID
+		}
+		b.WriteString(warnStyle.Render(fmt.Sprintf("⚠ ¿Eliminar sub-agente [%s]? ", targetID)))
+		b.WriteString(diffHintStyle.Render("[y]"))
+		b.WriteString(textStyle.Render(" Confirmar  "))
+		b.WriteString(diffHintStyle.Render("[Esc / Enter]"))
+		b.WriteString(textStyle.Render(" Cancelar"))
+	} else {
+		b.WriteString(diffHintStyle.Render("[Space]"))
+		b.WriteString(textStyle.Render(" Activar/Desactivar  "))
+		b.WriteString(diffHintStyle.Render("[Enter]"))
+		b.WriteString(textStyle.Render(" Editar  "))
+		b.WriteString(diffHintStyle.Render("[Ctrl+Y / c]"))
+		b.WriteString(textStyle.Render(" Copiar Prompt"))
+		b.WriteString("\n")
+		b.WriteString(diffHintStyle.Render("[Ctrl+N]"))
+		b.WriteString(textStyle.Render(" Nuevo  "))
+		b.WriteString(diffHintStyle.Render("[Ctrl+D]"))
+		b.WriteString(textStyle.Render(" Eliminar  "))
+		b.WriteString(diffHintStyle.Render("[Esc]"))
+		b.WriteString(textStyle.Render(" Cerrar"))
+	}
 	return m.modalBox(b.String())
 }
 
@@ -937,10 +1051,16 @@ func (m Model) agentEditorView() string {
 	// en vez de cortar las teclas de abajo.
 	footer := make([]string, 0, 2)
 	footer = append(footer, "")
-	footer = append(footer, diffHintStyle.Render("[↑/↓ campo]")+" "+
-		diffHintStyle.Render("[Ctrl+Y]")+textStyle.Render(" Copiar prompt  ")+
-		diffHintStyle.Render("[Ctrl+S]")+textStyle.Render(" Guardar  ")+
-		diffHintStyle.Render("[Esc]")+textStyle.Render(" Volver"))
+	if am.discardPending {
+		footer = append(footer, warnStyle.Render("⚠ Hay cambios sin guardar. ¿Descartar? ")+
+			diffHintStyle.Render("[y]")+textStyle.Render(" Descartar  ")+
+			diffHintStyle.Render("[Esc / Enter]")+textStyle.Render(" Continuar editando"))
+	} else {
+		footer = append(footer, diffHintStyle.Render("[↑/↓ campo]")+" "+
+			diffHintStyle.Render("[Ctrl+Y]")+textStyle.Render(" Copiar prompt  ")+
+			diffHintStyle.Render("[Ctrl+S]")+textStyle.Render(" Guardar  ")+
+			diffHintStyle.Render("[Esc]")+textStyle.Render(" Volver"))
+	}
 	return m.modalBoxWithFooter(b.String(), strings.Join(footer, "\n"))
 }
 

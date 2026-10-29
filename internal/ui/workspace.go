@@ -40,7 +40,7 @@ var (
 	keyKeys     = key.NewBinding(key.WithKeys("ctrl+k"))
 	keySidebar  = key.NewBinding(key.WithKeys("ctrl+b"))
 	keyClear    = key.NewBinding(key.WithKeys("ctrl+l"))
-	keySessions = key.NewBinding(key.WithKeys("ctrl+h"))
+	keySessions = key.NewBinding(key.WithKeys("ctrl+s"))
 	keyCopy     = key.NewBinding(key.WithKeys("ctrl+y"))
 	keyBlocks   = key.NewBinding(key.WithKeys("alt+c"))
 	keyAgents   = key.NewBinding(key.WithKeys("ctrl+t"))
@@ -91,9 +91,12 @@ var slashCommands = []slashCommand{
 	{Name: "/remove", Description: "Quitar archivo del contexto: /remove <ruta>"},
 	{Name: "/system", Description: "Editar el system prompt activo"},
 	{Name: "/compact", Description: "Resumir la conversación para liberar contexto"},
-	{Name: "/sessions", Description: "Historial de sesiones guardadas"},
+	{Name: "/sessions", Description: "Historial de sesiones guardadas (Ctrl+S)"},
 	{Name: "/blocks", Description: "Bloques de código detectados (Alt+C)"},
-	{Name: "/copy", Description: "Copiar el último bloque de código (Ctrl+Y)"},
+	{Name: "/copy", Description: "Copiar último bloque de código o respuesta (Ctrl+Y)"},
+	{Name: "/copy prompt", Description: "Copiar el último prompt enviado"},
+	{Name: "/copy text", Description: "Copiar la última respuesta del asistente"},
+	{Name: "/mouse", Description: "Alternar modo de ratón (rueda ↔ selección nativa)"},
 	{Name: "/mode", Description: "Modo agente: /mode plan|default|auto|chat"},
 	{Name: "/commit", Description: "Generar y confirmar un commit git (Ctrl+G)"},
 	{Name: "/review", Description: "Code review del diff actual: /review [rama-base]"},
@@ -109,6 +112,8 @@ var slashCommands = []slashCommand{
 	{Name: "/new", Description: "Crear una sesión limpia"},
 	{Name: "/title", Description: "Renombrar la sesión: /title <texto>"},
 	{Name: "/clear", Description: "Limpiar el historial de la conversación"},
+	{Name: "/exit", Description: "Salir de MKD (confirmación)"},
+	{Name: "/quit", Description: "Salir de MKD (confirmación)"},
 	{Name: "/help", Description: "Mostrar la ayuda de comandos"},
 }
 
@@ -169,8 +174,9 @@ type Model struct {
 	orchestrator *swarm.Orchestrator
 	// orchestratorCmd es el comando que ejecuta la misión (útil para tests).
 	orchestratorCmd tea.Cmd
-	// viewTab es la pestaña visible (0 = Orquestador, 1..9 = sub-agente).
-	viewTab int
+	// viewTab es la pestaña visible (0 = Orquestador, 1..N = sub-agente).
+	viewTab     int
+	agentScroll int
 
 	// reviewCancel cancela el stream de /review en curso.
 	reviewCancel context.CancelFunc
@@ -199,6 +205,7 @@ type Model struct {
 	agent        agentState
 
 	sidebarVisible bool
+	mouseCapture   bool
 
 	width             int
 	height            int
@@ -228,6 +235,10 @@ func New(opts Options) Model {
 	ta.KeyMap.InsertNewline = key.NewBinding(
 		key.WithKeys("alt+enter", "shift+enter", "ctrl+j"),
 		key.WithHelp("alt+enter", "nueva línea"),
+	)
+	ta.KeyMap.DeleteWordBackward = key.NewBinding(
+		key.WithKeys("alt+backspace", "ctrl+w", "ctrl+backspace", "ctrl+h"),
+		key.WithHelp("ctrl+backspace", "borrar palabra"),
 	)
 	ta.FocusedStyle.Base = lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
@@ -268,6 +279,7 @@ func New(opts Options) Model {
 		textarea:       ta,
 		spinner:        sp,
 		sidebarVisible: true,
+		mouseCapture:   true,
 
 		swarm:  newSwarmState(),
 		width:  100,
@@ -295,6 +307,13 @@ func (m *Model) startSession() {
 		Model:     provider.ActiveModel,
 		CreatedAt: time.Now(),
 	}
+	if m.swarm.active() {
+		m.session.Swarm = m.swarm.snapshot(m.viewTab)
+		if m.session.Swarm != nil {
+			m.session.SwarmTabs = m.session.Swarm.Order
+			m.session.SwarmTab = m.viewTab
+		}
+	}
 	m.sessionDirty = false
 	m.sessionAutoSet = false
 }
@@ -305,6 +324,13 @@ func (m *Model) syncSession() {
 	m.session.Provider = m.cfg.ActiveProvider
 	m.session.Model = provider.ActiveModel
 	m.session.Files = m.contextFilePaths()
+	if m.swarm.active() {
+		m.session.Swarm = m.swarm.snapshot(m.viewTab)
+		if m.session.Swarm != nil {
+			m.session.SwarmTabs = m.session.Swarm.Order
+			m.session.SwarmTab = m.viewTab
+		}
+	}
 	m.sessionDirty = true
 }
 
@@ -318,7 +344,7 @@ func (m Model) contextFilePaths() []string {
 
 // persistSession guarda la sesión si cambió y tiene contenido.
 func (m *Model) persistSession(force bool) {
-	if !force && (!m.sessionDirty || len(m.history) == 0) {
+	if !force && (!m.sessionDirty || (len(m.history) == 0 && !m.swarm.active())) {
 		return
 	}
 	if m.session.ID == "" {
@@ -331,6 +357,20 @@ func (m *Model) persistSession(force bool) {
 	}
 	m.session.Messages = messages
 	m.session.Summary = m.summary
+
+	// Persistir snapshot detallado del enjambre Swarm
+	if m.swarm.active() {
+		m.session.Swarm = m.swarm.snapshot(m.viewTab)
+		if m.session.Swarm != nil {
+			m.session.SwarmTabs = m.session.Swarm.Order
+			m.session.SwarmTab = m.viewTab
+		}
+	} else {
+		m.session.Swarm = nil
+		m.session.SwarmTabs = nil
+		m.session.SwarmTab = 0
+	}
+
 	if strings.TrimSpace(m.session.Title) == "" {
 		m.session.Title = firstPromptTitle(m.history)
 	}
@@ -375,10 +415,41 @@ func (m Model) loadSession(id string) (Model, tea.Cmd) {
 	m.notes = nil
 	m.hideSlashMenu()
 
+	if m.bus != nil {
+		m.bus.events.Close()
+		m.bus.broker.ResolveAll()
+		m.bus = nil
+	}
+	m.orchestrator = nil
+
 	m.session = session
 	m.sessionDirty = false
 	m.sessionAutoSet = strings.TrimSpace(session.Title) != "" && session.Title != "Sesión sin título"
 	m.summary = session.Summary
+
+	// Restaura el estado de la misión Swarm si existe en la sesión persistida.
+	if session.Swarm != nil && session.Swarm.Mission != "" {
+		m.swarm = restoreSwarmState(*session.Swarm)
+		targetTab := session.Swarm.SelectedTab
+		if targetTab == 0 && session.SwarmTab > 0 {
+			targetTab = session.SwarmTab
+		}
+		if targetTab > 0 {
+			if _, ok := m.swarm.agentByTab(targetTab); ok {
+				m.viewTab = targetTab
+			} else {
+				m.viewTab = 0
+			}
+		} else {
+			m.viewTab = 0
+		}
+	} else if len(session.SwarmTabs) > 0 {
+		m.swarm, m.viewTab = restoreLegacySwarmTabs(session.SwarmTabs, session.SwarmTab, m.cfg)
+	} else {
+		m.swarm = newSwarmState()
+		m.viewTab = 0
+	}
+	m.agentScroll = 0
 
 	m.history = make([]chatMessage, 0, len(session.Messages))
 	for _, msg := range session.Messages {
@@ -422,6 +493,16 @@ func (m Model) newSession() (Model, tea.Cmd) {
 	m.compacting = false
 	m.stream.Reset()
 	m.hideSlashMenu()
+
+	if m.bus != nil {
+		m.bus.events.Close()
+		m.bus.broker.ResolveAll()
+		m.bus = nil
+	}
+	m.orchestrator = nil
+	m.swarm = newSwarmState()
+	m.viewTab = 0
+	m.agentScroll = 0
 
 	m.history = nil
 	m.blocks = nil
@@ -628,6 +709,17 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m.updateWorkspaceKey(msg)
 	case tea.MouseMsg:
+		// En la pestaña de un sub-agente, la rueda del ratón desplaza su visor.
+		if m.swarm.active() && m.viewTab > 0 {
+			switch {
+			case msg.Button == tea.MouseButtonWheelUp || msg.Type == tea.MouseWheelUp:
+				m.scrollAgentTab(3)
+				return m, nil
+			case msg.Button == tea.MouseButtonWheelDown || msg.Type == tea.MouseWheelDown:
+				m.scrollAgentTab(-3)
+				return m, nil
+			}
+		}
 		var cmd tea.Cmd
 		m.viewport, cmd = m.viewport.Update(msg)
 		return m, cmd
@@ -776,14 +868,35 @@ func (m Model) updateWorkspaceKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	}
 
-	// Alt+0..9 cambia la pestaña del inspector Swarm.
+	// Alt+0..9 cambia directamente a una de las primeras 9 pestañas del inspector Swarm.
 	if tab, ok := swarmTabKey(msg.String()); ok {
 		return m.switchViewTab(tab)
 	}
 
+	// Alt+←/→ o Ctrl+Tab ciclan secuencialmente entre todas las pestañas (0..N),
+	// permitiendo acceder sin colisiones a sub-agentes >9.
+	if m.swarm.active() {
+		switch msg.String() {
+		case "alt+right", "ctrl+tab":
+			return m.nextViewTab(1)
+		case "alt+left", "ctrl+shift+tab":
+			return m.nextViewTab(-1)
+		}
+	}
+
+	// Ctrl+Backspace (en terminales recibido como ctrl+backspace, o como ctrl+h / 0x08)
+	// borra la palabra anterior en el textarea en lugar de abrir el modal de sesiones.
+	if msg.String() == "ctrl+backspace" || msg.String() == "ctrl+h" {
+		var cmd tea.Cmd
+		m.textarea, cmd = m.textarea.Update(tea.KeyMsg{Type: tea.KeyCtrlW})
+		m.updateSlashMenu()
+		m.mentionTextareaChanged()
+		return m, cmd
+	}
+
 	switch {
 	case key.Matches(msg, keyQuit):
-		return m.quit()
+		return m.openQuitConfirmModal()
 
 	case key.Matches(msg, keyPalette):
 		return m.openPalette()
@@ -821,24 +934,17 @@ func (m Model) updateWorkspaceKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case key.Matches(msg, keyClear):
+		// Pide confirmación si hay mensajes o actividad para no perder datos por error
+		if len(m.history) > 0 || len(m.blocks) > 0 || m.swarm.active() {
+			return m.openClearConfirmModal()
+		}
 		m.clearConversation()
 		return m, nil
 
 	case key.Matches(msg, keyEsc):
 		if m.swarm.running {
-			if m.orchestrator != nil {
-				m.orchestrator.Cancel()
-			}
-			if m.cancel != nil {
-				m.cancel()
-			}
-			m.swarm.orchestratorStatus = "Cancelada por el usuario"
-			if m.modal.kind == modalQuestion {
-				m.modal.kind = modalNone
-				m.modal.question = questionModal{}
-			}
-			m.refresh()
-			return m, m.textarea.Focus()
+			// Evita cancelar accidentalmente una misión en curso de múltiples agentes
+			return m.openSwarmCancelConfirmModal()
 		}
 		if m.streaming || m.waiting || m.modal.kind == modalQuestion {
 			m.cancelled = true
@@ -847,15 +953,58 @@ func (m Model) updateWorkspaceKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.refresh()
 			return m, m.textarea.Focus()
 		}
-		return m.quit()
+		return m.openQuitConfirmModal()
 
 	case key.Matches(msg, keyEnter):
 		return m.submitInput()
 
-	case key.Matches(msg, keyPageUp), key.Matches(msg, keyPageDown):
+	case key.Matches(msg, keyPageUp):
+		if m.swarm.active() && m.viewTab > 0 {
+			m.scrollAgentTab(m.agentPageDelta())
+			return m, nil
+		}
 		var cmd tea.Cmd
 		m.viewport, cmd = m.viewport.Update(msg)
 		return m, cmd
+
+	case key.Matches(msg, keyPageDown):
+		if m.swarm.active() && m.viewTab > 0 {
+			m.scrollAgentTab(-m.agentPageDelta())
+			return m, nil
+		}
+		var cmd tea.Cmd
+		m.viewport, cmd = m.viewport.Update(msg)
+		return m, cmd
+
+	case m.swarm.active() && m.viewTab > 0 && (msg.String() == "shift+up" || msg.String() == "alt+up" || msg.String() == "ctrl+up"):
+		m.scrollAgentTab(1)
+		return m, nil
+
+	case m.swarm.active() && m.viewTab > 0 && (msg.String() == "shift+down" || msg.String() == "alt+down" || msg.String() == "ctrl+down"):
+		m.scrollAgentTab(-1)
+		return m, nil
+
+	case m.swarm.active() && m.viewTab > 0 && m.textarea.Value() == "" && msg.String() == "up":
+		m.scrollAgentTab(1)
+		return m, nil
+
+	case m.swarm.active() && m.viewTab > 0 && m.textarea.Value() == "" && msg.String() == "down":
+		m.scrollAgentTab(-1)
+		return m, nil
+
+	case m.swarm.active() && m.viewTab > 0 && m.textarea.Value() == "" && msg.String() == "right":
+		return m.nextViewTab(1)
+
+	case m.swarm.active() && m.viewTab > 0 && m.textarea.Value() == "" && msg.String() == "left":
+		return m.nextViewTab(-1)
+
+	case m.swarm.active() && m.viewTab > 0 && m.textarea.Value() == "" && msg.String() == "home":
+		m.scrollAgentTabToTop()
+		return m, nil
+
+	case m.swarm.active() && m.viewTab > 0 && m.textarea.Value() == "" && msg.String() == "end":
+		m.scrollAgentTabToBottom()
+		return m, nil
 	}
 
 	var cmd tea.Cmd
@@ -945,6 +1094,15 @@ func (m Model) handleSlash(text string) (tea.Model, tea.Cmd) {
 
 	case text == "/copy":
 		return m.copyLastBlock()
+
+	case text == "/copy prompt":
+		return m.copyLastPrompt()
+
+	case text == "/copy text" || text == "/copy response":
+		return m.copyLastResponse()
+
+	case text == "/mouse":
+		return m.toggleMouseCapture()
 
 	case text == "/skills":
 		return m.listSkills()
@@ -1051,8 +1209,14 @@ func (m Model) handleSlash(text string) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case text == "/clear":
+		if len(m.history) > 0 || len(m.blocks) > 0 || m.swarm.active() {
+			return m.openClearConfirmModal()
+		}
 		m.clearConversation()
 		return m, nil
+
+	case text == "/exit" || text == "/quit":
+		return m.openQuitConfirmModal()
 
 	case text == "/help":
 		m.notice = "Comandos: /model, /keys, /add, /system, /compact, /sessions, /mode, /commit, /review, /mcp, /agents, /swarm, /clear"
@@ -1394,6 +1558,19 @@ func (m *Model) clearConversation() {
 	m.compacting = false
 	m.hideSlashMenu()
 
+	if m.bus != nil {
+		m.bus.events.Close()
+		m.bus.broker.ResolveAll()
+		m.bus = nil
+	}
+	m.orchestrator = nil
+	m.swarm = newSwarmState()
+	m.viewTab = 0
+	m.agentScroll = 0
+	m.session.Swarm = nil
+	m.session.SwarmTabs = nil
+	m.session.SwarmTab = 0
+
 	m.history = nil
 	m.blocks = nil
 	m.notes = nil
@@ -1578,6 +1755,9 @@ func (m Model) runPaletteAction(id string) (Model, tea.Cmd) {
 	case "new":
 		return m.newSession()
 	case "clear":
+		if len(m.history) > 0 || len(m.blocks) > 0 || m.swarm.active() {
+			return m.openClearConfirmModal()
+		}
 		m.clearConversation()
 		return m, nil
 	case "sidebar":
@@ -1882,6 +2062,10 @@ func (m Model) streamingBlock() string {
 		width = 80
 	}
 
+	if m.swarm.running {
+		return m.swarmStreamingBlock(width)
+	}
+
 	header := assistantHeader()
 	switch {
 	case m.waiting:
@@ -2057,7 +2241,7 @@ func (m Model) statusView(width int) string {
 		hints = "resumiendo conversación…"
 	case m.swarm.running:
 		mode = "SWARM"
-		hints = "sub-agentes en paralelo · Alt+0..9 inspector · Esc cancelar"
+		hints = "sub-agentes en paralelo · Alt+0..9 / Alt+←/→ inspector · Esc cancelar"
 	case m.streaming || m.waiting:
 		if m.agent.requested {
 			mode = "AGENTE"
@@ -2125,4 +2309,40 @@ func (m Model) statusView(width int) string {
 		line += strings.Repeat(" ", pad)
 	}
 	return statusBarStyle.Width(width).Render(line)
+}
+
+// toggleMouseCapture alterna entre el modo de captura de ratón (scroll con rueda)
+// y el modo de selección nativa de terminal directa (arrastrar para seleccionar sin Shift).
+func (m Model) toggleMouseCapture() (tea.Model, tea.Cmd) {
+	m.mouseCapture = !m.mouseCapture
+	if m.mouseCapture {
+		m.notice = "Ratón: capturado (scroll con rueda · Shift+arrastrar para selección nativa)"
+		return m, tea.EnableMouseCellMotion
+	}
+	m.notice = "Ratón: selección nativa directa activada (arrastrar sin Shift · scroll con PgUp/PgDn)"
+	return m, tea.DisableMouse
+}
+
+// scrollAgentTab desplaza el visor del sub-agente delta líneas hacia arriba
+// (delta > 0) o hacia abajo (delta < 0).
+func (m *Model) scrollAgentTab(delta int) {
+	m.agentScroll += delta
+	if m.agentScroll < 0 {
+		m.agentScroll = 0
+	}
+}
+
+// scrollAgentTabToTop salta al inicio del log del sub-agente activo.
+func (m *Model) scrollAgentTabToTop() {
+	m.agentScroll = 999999
+}
+
+// scrollAgentTabToBottom salta a la cola en vivo del log del sub-agente activo.
+func (m *Model) scrollAgentTabToBottom() {
+	m.agentScroll = 0
+}
+
+// agentPageDelta calcula el salto de página para scroll en el visor de agentes.
+func (m Model) agentPageDelta() int {
+	return max(5, m.mainHeight/2)
 }

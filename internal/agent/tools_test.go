@@ -242,3 +242,44 @@ func TestToolsCatalog(t *testing.T) {
 		}
 	}
 }
+
+func TestReadInvertedAndOutOfBounds(t *testing.T) {
+	dir := t.TempDir()
+	filePath := filepath.Join(dir, "sample.txt")
+	var content strings.Builder
+	for i := 1; i <= 2000; i++ {
+		content.WriteString("linea de prueba\n")
+	}
+	if err := os.WriteFile(filePath, []byte(content.String()), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	// Caso 1: Rango invertido start=1559, end=1060 (el que causó el pánico exacto en la captura)
+	prop, err := BuildProposal(Call{
+		Name:      ToolReadFile,
+		Arguments: `{"path":"sample.txt","start_line":1559,"end_line":1060}`,
+	}, dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := Read(prop, dir)
+	if err != nil {
+		t.Fatalf("Read fallo con error: %v", err)
+	}
+	if !strings.Contains(out, "líneas 1060-1559") {
+		t.Fatalf("se esperaba que invirtiera el rango ordenadamente, got: %s", out)
+	}
+
+	// Caso 2: start fuera del archivo
+	propOut, _ := BuildProposal(Call{
+		Name:      ToolReadFile,
+		Arguments: `{"path":"sample.txt","start_line":9999}`,
+	}, dir)
+	outOut, err := Read(propOut, dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(outOut, "solo tiene 2000 líneas") {
+		t.Fatalf("se esperaba mensaje de fuera de rango: %s", outOut)
+	}
+}

@@ -6,6 +6,24 @@ Todas las modificaciones relevantes de MKD se documentan aquí.
 
 ### Añadido
 
+- **Corrección de Colisión de Pestañas Swarm con >9 Agentes y Navegación por Overflow (`ui`)**:
+  - **Eliminación de colisiones de pestañas (`swarmstate.go` y `swarmrun.go`)**:
+    - `agent()` ahora asigna índices secuenciales únicos (`len(s.order) + 1`) sin clampear a 9, eliminando colisiones silenciosas entre sub-agentes en enjambres de más de 9 miembros.
+    - `switchViewTab` y `nextViewTab` actualizados para admitir y ciclar cualquier índice válido (0..N).
+    - `agentByTab` ahora itera de forma determinista sobre el orden de registro (`s.order`), eliminando la aleatoriedad de los maps de Go.
+  - **Auto-reparación en restauración de sesión (`restoreSwarmState`)**:
+    - Detección de colisiones de índices al restaurar sesiones para auto-reparar estados antiguos donde múltiples agentes compartían el índice 9, reasignando índices únicos secuenciales.
+  - **Barra de pestañas con visibilidad garantizada del agente activo y desbordamiento (`swarmview.go`)**:
+    - Nueva función `renderTabBarWithActiveVisible` que utiliza una ventana deslizante centrada en la pestaña activa para asegurar que el agente seleccionado siempre sea visible, independientemente del ancho de la terminal o de cuántos agentes existan.
+    - Indicadores visuales claros de desbordamiento izquierdo y derecho (`◀ +N` / `+M ▶`) que informan cuántas pestañas quedan ocultas en cada dirección.
+    - Insignia de pestaña activa e indicador de atajos en el header del inspector de agentes (`[Pestaña X · Alt+←/→]`).
+  - **Navegación por teclado enriquecida (`workspace.go`)**:
+    - Nuevos atajos `Alt+Right` / `Ctrl+Tab` (siguiente pestaña) y `Alt+Left` / `Ctrl+Shift+Tab` (pestaña anterior) para ciclar cíclicamente entre todas las pestañas (0..N).
+    - Teclas de flecha horizontal (`←` / `→`) habilitadas para cambiar de agente cuando se está inspeccionando un sub-agente y el área de texto está vacía.
+  - **Suite de Pruebas Unitarias**:
+    - `TestSwarmTabPersistenceMoreThan9AgentsRoundTrip` y `TestSwarmRestoreLegacyCollisionSelfHeal` en `swarm_persistence_test.go`.
+    - `TestSwarmKeyboardNavigationBeyond9` y `TestSwarmTabBarOverflowActiveVisible` en `swarm_ui_test.go`.
+
 - **Soporte nativo para proveedor Google Antigravity (`agy`)**:
   - Detección automática del binario `agy` (`~/.local/bin/agy`, `/usr/local/bin/agy`, `PATH`) y de la cuenta activa de Google desde `~/.gemini/google_accounts.json`.
   - Nuevo comando CLI `mkd auth antigravity` (alias `mkd auth agy`):

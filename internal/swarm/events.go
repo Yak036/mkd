@@ -114,6 +114,8 @@ type SwarmEvent struct {
 	AgentID string
 	// Task es el título de la tarea asignada.
 	Task string
+	// Instructions es la orden detallada enviada por el orquestador.
+	Instructions string
 	// Text transporta texto (chunk, mensaje de error o resultado).
 	Text string
 	// Tool es el nombre de la herramienta invocada.

@@ -371,7 +371,7 @@ func (m Model) updateBlocksModal(msg tea.KeyMsg) (Model, tea.Cmd) {
 
 	switch {
 	case key.Matches(msg, keyQuit):
-		return m.quit()
+		return m.openQuitConfirmModal()
 	case key.Matches(msg, keyEsc):
 		return m.closeModal()
 	case msg.String() == "up":

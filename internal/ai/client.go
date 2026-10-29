@@ -592,9 +592,51 @@ type ToolResponse struct {
 	Calls []openai.ToolCall
 }
 
+// isTransientError identifica fallos recuperables de red, sobrecarga o límites de tasa de la API.
+func isTransientError(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "overloaded") ||
+		strings.Contains(msg, "rate_limit") ||
+		strings.Contains(msg, "rate limit") ||
+		strings.Contains(msg, "try again later") ||
+		strings.Contains(msg, "503") ||
+		strings.Contains(msg, "502") ||
+		strings.Contains(msg, "504") ||
+		strings.Contains(msg, "429") ||
+		strings.Contains(msg, "connection reset") ||
+		strings.Contains(msg, "temporarily unavailable") ||
+		strings.Contains(msg, "server error")
+}
+
 // CompleteMessagesTools hace una petición no streaming con herramientas y
 // devuelve el mensaje completo del asistente para inspeccionar ToolCalls.
+// Incluye reintentos automáticos con backoff exponencial si el servidor reporta sobrecarga o rate limit.
 func (c *Client) CompleteMessagesTools(ctx context.Context, messages []openai.ChatCompletionMessage, tools []openai.Tool) (openai.ChatCompletionMessage, error) {
+	maxRetries := 3
+	for attempt := 0; attempt <= maxRetries; attempt++ {
+		msg, err := c.completeMessagesToolsOnce(ctx, messages, tools)
+		if err == nil {
+			return msg, nil
+		}
+		if !isTransientError(err) || attempt == maxRetries || ctx.Err() != nil {
+			return msg, err
+		}
+
+		// Backoff progresivo: 1.5s, 3s, 4.5s
+		backoff := time.Duration(attempt+1) * 1500 * time.Millisecond
+		select {
+		case <-time.After(backoff):
+		case <-ctx.Done():
+			return msg, ctx.Err()
+		}
+	}
+	return openai.ChatCompletionMessage{}, errors.New("reintentos agotados por sobrecarga del servidor")
+}
+
+func (c *Client) completeMessagesToolsOnce(ctx context.Context, messages []openai.ChatCompletionMessage, tools []openai.Tool) (openai.ChatCompletionMessage, error) {
 	if !c.Ready() {
 		return openai.ChatCompletionMessage{}, ErrNotConfigured
 	}

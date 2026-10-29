@@ -7,6 +7,7 @@ import (
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/Yak036/mkd/internal/config"
+	"github.com/Yak036/mkd/internal/swarm"
 )
 
 // ContextFile representa un archivo anclado a la sesión con su hash SHA-256
@@ -94,6 +95,33 @@ func (m Model) sidebarView(width, height int) string {
 			}
 			add(line)
 		}
+	} else if len(m.cfg.SubAgents) > 0 {
+		separator()
+		profiles := swarm.SortProfiles(m.cfg.SubAgents)
+		activeCount := len(swarm.EnabledProfiles(m.cfg.SubAgents))
+		add(sectionTitle("🤖", fmt.Sprintf("SUB-AGENTES (%d/%d)", activeCount, len(profiles))))
+		for _, p := range profiles {
+			dot := offDotStyle.Render("○")
+			nameStyle := mutedStyle
+			if p.Enabled {
+				dot = activeDotStyle.Render("●")
+				nameStyle = textStyle
+			}
+			icon := p.Icon
+			if icon == "" {
+				icon = "󰀐"
+			}
+			modelTag := p.Model
+			if modelTag == "" {
+				modelTag = "global"
+			}
+			add(fmt.Sprintf("  %s %s %s %s",
+				dot,
+				icon,
+				nameStyle.Render(oneLine(p.ID, max(6, innerWidth-20))),
+				mutedStyle.Render("("+oneLine(modelTag, 8)+")"),
+			))
+		}
 	}
 
 	if m.mcp != nil {
@@ -138,7 +166,7 @@ func (m Model) sidebarView(width, height int) string {
 	add(sidebarKV("ID", valueOr(shortSessionID(m.session.ID), "—"), innerWidth))
 
 	add("")
-	add(mutedStyle.Render("Ctrl+B ocultar · Ctrl+H sesiones"))
+	add(mutedStyle.Render("Ctrl+B ocultar · Ctrl+S sesiones"))
 	add(mutedStyle.Render("Ctrl+G commit · Ctrl+O MCP · Ctrl+T agents"))
 
 	content := strings.Join(lines, "\n")

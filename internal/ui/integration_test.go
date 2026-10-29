@@ -17,6 +17,10 @@ import (
 // mkTestModel construye un Model mínimo para probar flujos sin TTY.
 func mkTestModel(t *testing.T, dir string, mode string) Model {
 	t.Helper()
+	tmp := t.TempDir()
+	t.Setenv("HOME", tmp)
+	t.Setenv("XDG_CONFIG_HOME", tmp)
+	t.Setenv("XDG_DATA_HOME", tmp)
 	cfg := config.Defaults()
 	cfg.AgentMode = mode
 	cfg.Normalize()

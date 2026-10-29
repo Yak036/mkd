@@ -15,16 +15,61 @@ import (
 
 // Session es una conversación persistida en disco.
 type Session struct {
-	ID        string    `json:"id"`
-	Title     string    `json:"title"`
-	Cwd       string    `json:"cwd"`
-	Provider  string    `json:"provider"`
-	Model     string    `json:"model"`
-	Files     []string  `json:"files,omitempty"`
-	Summary   string    `json:"summary,omitempty"`
-	Messages  []Message `json:"messages"`
+	ID       string    `json:"id"`
+	Title    string    `json:"title"`
+	Cwd      string    `json:"cwd"`
+	Provider string    `json:"provider"`
+	Model    string    `json:"model"`
+	Files    []string  `json:"files,omitempty"`
+	Summary  string    `json:"summary,omitempty"`
+	Messages []Message `json:"messages"`
+	// Swarm conserva el estado completo de la misión Swarm (pestañas, outputs, pasos, orden).
+	Swarm *SwarmSessionState `json:"swarm,omitempty"`
+	// SwarmTabs y SwarmTab conservan retrocompatibilidad con versiones previas.
+	SwarmTabs []string  `json:"swarm_tabs,omitempty"`
+	SwarmTab  int       `json:"swarm_tab,omitempty"`
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
+}
+
+// SwarmSessionState representa el estado global persistido de una misión Swarm.
+type SwarmSessionState struct {
+	Mission            string                     `json:"mission,omitempty"`
+	OrchestratorStatus string                     `json:"orchestrator_status,omitempty"`
+	Delegations        int                        `json:"delegations,omitempty"`
+	Order              []string                   `json:"order,omitempty"`
+	SelectedTab        int                        `json:"selected_tab,omitempty"`
+	Running            bool                       `json:"running,omitempty"`
+	Agents             map[string]SwarmTabSession `json:"agents,omitempty"`
+}
+
+// SwarmTabSession representa el estado persistido de una pestaña de sub-agente.
+type SwarmTabSession struct {
+	ID           string             `json:"id"`
+	Name         string             `json:"name"`
+	Icon         string             `json:"icon,omitempty"`
+	Color        string             `json:"color,omitempty"`
+	Task         string             `json:"task,omitempty"`
+	Instructions string             `json:"instructions,omitempty"`
+	Status       string             `json:"status"` // "queued", "running", "waiting_approval", "done", "error"
+	Tool         string             `json:"tool,omitempty"`
+	Args         string             `json:"args,omitempty"`
+	LastLine     string             `json:"last_line,omitempty"`
+	Output       string             `json:"output,omitempty"`
+	Tokens       int                `json:"tokens,omitempty"`
+	DurationMs   int64              `json:"duration_ms,omitempty"`
+	Index        int                `json:"index"`
+	Err          string             `json:"err,omitempty"`
+	Steps        []SwarmStepSession `json:"steps,omitempty"`
+}
+
+// SwarmStepSession guarda una acción/tool ejecutada por un sub-agente.
+type SwarmStepSession struct {
+	Tool  string `json:"tool"`
+	Args  string `json:"args,omitempty"`
+	Done  bool   `json:"done"`
+	Error bool   `json:"error,omitempty"`
+	Text  string `json:"text,omitempty"`
 }
 
 // Message es un mensaje persistido. Storage no depende de otros paquetes.

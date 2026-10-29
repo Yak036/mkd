@@ -37,6 +37,9 @@ const (
 	modalMCP
 	modalAgents
 	modalQuestion
+	modalQuitConfirm
+	modalClearConfirm
+	modalSwarmCancelConfirm
 )
 
 type modalState struct {
@@ -162,7 +165,7 @@ func (m Model) updateProviderModal(msg tea.KeyMsg) (Model, tea.Cmd) {
 
 	switch {
 	case key.Matches(msg, keyQuit):
-		return m.quit()
+		return m.openQuitConfirmModal()
 	case key.Matches(msg, keyEsc):
 		return m.closeModal()
 	case msg.String() == "tab" || msg.String() == "down":
@@ -544,16 +547,17 @@ type modelsFetchedMsg struct {
 }
 
 type modelsModal struct {
-	keys     []string
-	index    int
-	filter   textinput.Model
-	all      []string
-	visible  []string
-	selected int
-	scroll   int
-	loading  bool
-	err      string
-	status   string
+	keys          []string
+	index         int
+	filter        textinput.Model
+	all           []string
+	visible       []string
+	selected      int
+	scroll        int
+	loading       bool
+	err           string
+	status        string
+	deletePending bool
 }
 
 func newModelsModal(cfg config.Config) modelsModal {
@@ -694,9 +698,24 @@ func (m Model) updateModelsModal(msg tea.KeyMsg) (Model, tea.Cmd) {
 	mm := &m.modal.models
 	rows := m.modelRows()
 
+	// Si hay una eliminación pendiente, esperamos confirmación explícita con 'y'.
+	// Por diseño seguro por defecto, Enter o Esc cancelan el borrado.
+	if mm.deletePending {
+		switch {
+		case msg.String() == "y" || msg.String() == "Y":
+			return m.deleteSelectedModel()
+		case key.Matches(msg, keyEsc) || key.Matches(msg, keyEnter) || msg.String() == "n" || msg.String() == "N":
+			mm.deletePending = false
+			return m, nil
+		default:
+			mm.deletePending = false
+			return m, nil
+		}
+	}
+
 	switch {
 	case key.Matches(msg, keyQuit):
-		return m.quit()
+		return m.openQuitConfirmModal()
 	case key.Matches(msg, keyEsc):
 		return m.closeModal()
 	case msg.String() == "ctrl+f":
@@ -704,7 +723,13 @@ func (m Model) updateModelsModal(msg tea.KeyMsg) (Model, tea.Cmd) {
 	case msg.String() == "ctrl+a":
 		return m.addModelFromFilter()
 	case msg.String() == "ctrl+d":
-		return m.deleteSelectedModel()
+		// Activa el estado de confirmación pendiente antes de eliminar el modelo
+		if mm.selectedModel() == "" {
+			mm.status = "No hay modelo seleccionado para eliminar."
+			return m, nil
+		}
+		mm.deletePending = true
+		return m, nil
 	case msg.String() == "ctrl+left" || msg.String() == "alt+left":
 		return m.switchModelsProvider(-1)
 	case msg.String() == "ctrl+right" || msg.String() == "alt+right":
@@ -784,6 +809,7 @@ func (m Model) addModelFromFilter() (Model, tea.Cmd) {
 
 func (m Model) deleteSelectedModel() (Model, tea.Cmd) {
 	mm := &m.modal.models
+	mm.deletePending = false
 	id := mm.selectedModel()
 	if id == "" {
 		mm.status = "No hay modelo seleccionado para eliminar."
@@ -1078,9 +1104,17 @@ func (m Model) modelsModalView() string {
 	}
 
 	b.WriteString("\n")
-	b.WriteString(mutedStyle.Render("Enter seleccionar · Ctrl+A agregar ID · Ctrl+D eliminar"))
-	b.WriteString("\n")
-	b.WriteString(mutedStyle.Render("Ctrl+F sincronizar API · Ctrl+←/→ proveedor · Esc cerrar"))
+	if mm.deletePending {
+		b.WriteString(warnStyle.Render(fmt.Sprintf("⚠ ¿Eliminar modelo [%s]? ", mm.selectedModel())))
+		b.WriteString(diffHintStyle.Render("[y]"))
+		b.WriteString(textStyle.Render(" Confirmar  "))
+		b.WriteString(diffHintStyle.Render("[Esc / Enter]"))
+		b.WriteString(textStyle.Render(" Cancelar"))
+	} else {
+		b.WriteString(mutedStyle.Render("Enter seleccionar · Ctrl+A agregar ID · Ctrl+D eliminar"))
+		b.WriteString("\n")
+		b.WriteString(mutedStyle.Render("Ctrl+F sincronizar API · Ctrl+←/→ proveedor · Esc cerrar"))
+	}
 	return m.modalBox(b.String())
 }
 
@@ -1127,7 +1161,7 @@ func (m Model) openSystemModal() (Model, tea.Cmd) {
 func (m Model) updateSystemModal(msg tea.KeyMsg) (Model, tea.Cmd) {
 	switch {
 	case key.Matches(msg, keyQuit):
-		return m.quit()
+		return m.openQuitConfirmModal()
 	case key.Matches(msg, keyEsc):
 		return m.closeModal()
 	case msg.String() == "ctrl+s":
@@ -1247,7 +1281,7 @@ func (m Model) updatePaletteModal(msg tea.KeyMsg) (Model, tea.Cmd) {
 
 	switch {
 	case key.Matches(msg, keyQuit):
-		return m.quit()
+		return m.openQuitConfirmModal()
 	case key.Matches(msg, keyEsc):
 		return m.closeModal()
 	case msg.String() == "up":
@@ -1352,12 +1386,13 @@ type sessionSavedMsg struct {
 }
 
 type sessionsModal struct {
-	sessions []storage.Session
-	selected int
-	scroll   int
-	loading  bool
-	status   string
-	err      string
+	sessions      []storage.Session
+	selected      int
+	scroll        int
+	loading       bool
+	status        string
+	err           string
+	deletePending bool
 }
 
 func (m Model) openSessionsModal() (Model, tea.Cmd) {
@@ -1446,9 +1481,24 @@ func (m Model) updateSessionsModal(msg tea.KeyMsg) (Model, tea.Cmd) {
 	sm := &m.modal.sessions
 	rows := m.sessionRows()
 
+	// Si hay una eliminación pendiente, esperamos confirmación explícita con 'y'.
+	// Por diseño seguro por defecto, Enter o Esc cancelan el borrado.
+	if sm.deletePending {
+		switch {
+		case msg.String() == "y" || msg.String() == "Y":
+			return m.deleteSelectedSession()
+		case key.Matches(msg, keyEsc) || key.Matches(msg, keyEnter) || msg.String() == "n" || msg.String() == "N":
+			sm.deletePending = false
+			return m, nil
+		default:
+			sm.deletePending = false
+			return m, nil
+		}
+	}
+
 	switch {
 	case key.Matches(msg, keyQuit):
-		return m.quit()
+		return m.openQuitConfirmModal()
 	case key.Matches(msg, keyEsc):
 		return m.closeModal()
 	case msg.String() == "ctrl+n":
@@ -1466,7 +1516,13 @@ func (m Model) updateSessionsModal(msg tea.KeyMsg) (Model, tea.Cmd) {
 		sm.moveSelection(rows, rows)
 		return m, nil
 	case msg.String() == "ctrl+d":
-		return m.deleteSelectedSession()
+		// Activa el estado de confirmación pendiente antes de eliminar la sesión
+		if _, ok := sm.selectedSession(); !ok {
+			sm.status = "No hay sesión seleccionada para eliminar."
+			return m, nil
+		}
+		sm.deletePending = true
+		return m, nil
 	case msg.String() == "ctrl+r":
 		return m, tea.Batch(loadSessionsCmd(), m.spinner.Tick)
 	case key.Matches(msg, keyEnter):
@@ -1477,6 +1533,7 @@ func (m Model) updateSessionsModal(msg tea.KeyMsg) (Model, tea.Cmd) {
 
 func (m Model) deleteSelectedSession() (Model, tea.Cmd) {
 	sm := &m.modal.sessions
+	sm.deletePending = false
 	session, ok := sm.selectedSession()
 	if !ok {
 		sm.status = "No hay sesión seleccionada para eliminar."
@@ -1576,9 +1633,21 @@ func (m Model) sessionsModalView() string {
 	}
 
 	b.WriteString("\n")
-	b.WriteString(mutedStyle.Render("Enter reanudar · Ctrl+N nueva · Ctrl+D eliminar"))
-	b.WriteString("\n")
-	b.WriteString(mutedStyle.Render("Ctrl+R recargar · ↑/↓ navegar · Esc cerrar"))
+	if sm.deletePending {
+		targetTitle := ""
+		if session, ok := sm.selectedSession(); ok {
+			targetTitle = valueOr(session.Title, session.ID)
+		}
+		b.WriteString(warnStyle.Render(fmt.Sprintf("⚠ ¿Eliminar sesión [%s]? ", oneLine(targetTitle, 30))))
+		b.WriteString(diffHintStyle.Render("[y]"))
+		b.WriteString(textStyle.Render(" Confirmar  "))
+		b.WriteString(diffHintStyle.Render("[Esc / Enter]"))
+		b.WriteString(textStyle.Render(" Cancelar"))
+	} else {
+		b.WriteString(mutedStyle.Render("Enter reanudar · Ctrl+N nueva · Ctrl+D eliminar"))
+		b.WriteString("\n")
+		b.WriteString(mutedStyle.Render("Ctrl+R recargar · ↑/↓ navegar · Esc cerrar"))
+	}
 	return m.modalBox(b.String())
 }
 
@@ -1624,6 +1693,12 @@ func (m Model) updateModal(msg tea.KeyMsg) (Model, tea.Cmd) {
 		return m.updateAgentModal(msg)
 	case modalQuestion:
 		return m.handleQuestionKey(msg)
+	case modalQuitConfirm:
+		return m.updateQuitConfirmModal(msg)
+	case modalClearConfirm:
+		return m.updateClearConfirmModal(msg)
+	case modalSwarmCancelConfirm:
+		return m.updateSwarmCancelConfirmModal(msg)
 	default:
 		return m, nil
 	}
@@ -1701,6 +1776,12 @@ func (m Model) modalView() string {
 		return m.agentModalView()
 	case modalQuestion:
 		return m.questionModalView()
+	case modalQuitConfirm:
+		return m.quitConfirmModalView()
+	case modalClearConfirm:
+		return m.clearConfirmModalView()
+	case modalSwarmCancelConfirm:
+		return m.swarmCancelConfirmModalView()
 	default:
 		return ""
 	}
@@ -1864,4 +1945,175 @@ func containsString(values []string, target string) bool {
 		}
 	}
 	return false
+}
+
+// ---------------------------------------------------------------------------
+// Confirmación de Salida (Double-Check Quit)
+// ---------------------------------------------------------------------------
+
+// openQuitConfirmModal abre el diálogo de confirmación para evitar cierres accidentales.
+func (m Model) openQuitConfirmModal() (Model, tea.Cmd) {
+	m.hideSlashMenu()
+	m.modal.kind = modalQuitConfirm
+	m.textarea.Blur()
+	m.resizeModals()
+	return m, nil
+}
+
+// updateQuitConfirmModal procesa la respuesta del usuario ante la confirmación de salida.
+func (m Model) updateQuitConfirmModal(msg tea.KeyMsg) (Model, tea.Cmd) {
+	switch {
+	case key.Matches(msg, keyQuit), // Segundo Ctrl+C confirma la salida
+		key.Matches(msg, keyEnter),
+		msg.String() == "s", msg.String() == "S",
+		msg.String() == "y", msg.String() == "Y":
+		return m.quit()
+
+	case key.Matches(msg, keyEsc),
+		msg.String() == "n", msg.String() == "N",
+		msg.String() == "q", msg.String() == "c":
+		// Cancela la salida y vuelve al workspace con el foco en el input
+		return m.closeModal()
+	}
+	return m, nil
+}
+
+// quitConfirmModalView renderiza la ventana modal de confirmación de salida.
+func (m Model) quitConfirmModalView() string {
+	width := m.modalContentWidth()
+	var b strings.Builder
+
+	b.WriteString(warnStyle.Render("🚪 ¿Deseas salir de MKD?"))
+	b.WriteString("\n")
+	b.WriteString(mutedStyle.Render(strings.Repeat("─", width)))
+	b.WriteString("\n\n")
+
+	b.WriteString(textStyle.Render("  La sesión actual, historial y contexto se guardarán"))
+	b.WriteString("\n")
+	b.WriteString(textStyle.Render("  automáticamente en disco."))
+	b.WriteString("\n\n")
+
+	b.WriteString("  " + diffHintStyle.Render("[s] / [Enter] / [Ctrl+C]") + textStyle.Render("  Confirmar y salir") + "\n")
+	b.WriteString("  " + diffHintStyle.Render("[Esc] / [n]") + textStyle.Render("              Cancelar y continuar en MKD") + "\n\n")
+
+	b.WriteString(mutedStyle.Render("  Presiona ") + diffHintStyle.Render("Ctrl+C") + mutedStyle.Render(" nuevamente para salir de inmediato."))
+
+	return m.modalBox(b.String())
+}
+
+// ---------------------------------------------------------------------------
+// Confirmación de Limpieza de Conversación
+// ---------------------------------------------------------------------------
+
+// openClearConfirmModal abre el diálogo de confirmación para limpiar la conversación actual.
+func (m Model) openClearConfirmModal() (Model, tea.Cmd) {
+	m.hideSlashMenu()
+	m.modal.kind = modalClearConfirm
+	m.textarea.Blur()
+	m.resizeModals()
+	return m, nil
+}
+
+// updateClearConfirmModal gestiona la respuesta a la confirmación de limpieza de chat.
+// Por defecto seguro, Enter o Esc cancelan la limpieza y solo 'y' / 's' confirman.
+func (m Model) updateClearConfirmModal(msg tea.KeyMsg) (Model, tea.Cmd) {
+	switch {
+	case msg.String() == "y" || msg.String() == "Y" || msg.String() == "s" || msg.String() == "S":
+		// Confirmación explícita: limpia la conversación y regresa al workspace
+		m.modal.kind = modalNone
+		m.clearConversation()
+		m.notice = "Conversación limpiada."
+		return m, m.textarea.Focus()
+
+	case key.Matches(msg, keyEsc),
+		key.Matches(msg, keyEnter),
+		msg.String() == "n", msg.String() == "N",
+		msg.String() == "q", msg.String() == "c":
+		// Cancelación por defecto seguro: regresa al workspace sin alterar la conversación
+		return m.closeModal()
+	}
+	return m, nil
+}
+
+// clearConfirmModalView renderiza la ventana modal de confirmación de limpieza.
+func (m Model) clearConfirmModalView() string {
+	width := m.modalContentWidth()
+	var b strings.Builder
+
+	b.WriteString(warnStyle.Render("🧹 ¿Deseas limpiar la conversación actual?"))
+	b.WriteString("\n")
+	b.WriteString(mutedStyle.Render(strings.Repeat("─", width)))
+	b.WriteString("\n\n")
+
+	b.WriteString(textStyle.Render("  Se borrarán los mensajes e historial del espacio de trabajo."))
+	b.WriteString("\n")
+	b.WriteString(textStyle.Render("  El historial en pantalla se reiniciará para comenzar un nuevo chat."))
+	b.WriteString("\n\n")
+
+	b.WriteString("  " + diffHintStyle.Render("[y]") + textStyle.Render("            Confirmar y limpiar conversación") + "\n")
+	b.WriteString("  " + diffHintStyle.Render("[Esc] / [Enter]") + textStyle.Render("  Cancelar y mantener conversación") + "\n")
+
+	return m.modalBox(b.String())
+}
+
+// ---------------------------------------------------------------------------
+// Confirmación de Cancelación de Misión Swarm
+// ---------------------------------------------------------------------------
+
+// openSwarmCancelConfirmModal abre el diálogo para confirmar la interrupción del swarm.
+func (m Model) openSwarmCancelConfirmModal() (Model, tea.Cmd) {
+	m.hideSlashMenu()
+	m.modal.kind = modalSwarmCancelConfirm
+	m.textarea.Blur()
+	m.resizeModals()
+	return m, nil
+}
+
+// updateSwarmCancelConfirmModal gestiona la confirmación de abortar la misión swarm.
+// Por defecto seguro, Enter o Esc cancelan el aborto para no perder el progreso de la misión.
+func (m Model) updateSwarmCancelConfirmModal(msg tea.KeyMsg) (Model, tea.Cmd) {
+	switch {
+	case msg.String() == "y" || msg.String() == "Y" || msg.String() == "s" || msg.String() == "S":
+		// Confirmación explícita: abortar la misión en ejecución
+		m.modal.kind = modalNone
+		if m.orchestrator != nil {
+			m.orchestrator.Cancel()
+		}
+		if m.cancel != nil {
+			m.cancel()
+		}
+		m.swarm.orchestratorStatus = "Cancelada por el usuario"
+		m.modal.question = questionModal{}
+		m.refresh()
+		return m, m.textarea.Focus()
+
+	case key.Matches(msg, keyEsc),
+		key.Matches(msg, keyEnter),
+		msg.String() == "n", msg.String() == "N",
+		msg.String() == "c":
+		// Cancelar la interrupción: el swarm continúa ejecutando tareas normalmente
+		return m.closeModal()
+	}
+	return m, nil
+}
+
+// swarmCancelConfirmModalView renderiza la ventana modal de confirmación para cancelar el swarm.
+func (m Model) swarmCancelConfirmModalView() string {
+	width := m.modalContentWidth()
+	var b strings.Builder
+
+	b.WriteString(warnStyle.Render("⚠️  ¿Cancelar la misión Swarm en curso?"))
+	b.WriteString("\n")
+	b.WriteString(mutedStyle.Render(strings.Repeat("─", width)))
+	b.WriteString("\n\n")
+
+	b.WriteString(textStyle.Render("  Hay sub-agentes ejecutando tareas concurrentes en segundo plano."))
+	b.WriteString("\n")
+	b.WriteString(textStyle.Render("  Al cancelar, se detendrán la orquestación y las herramientas activas."))
+	b.WriteString("\n\n")
+
+	b.WriteString("  " + diffHintStyle.Render("[y]") + textStyle.Render("            Confirmar y detener misión Swarm") + "\n")
+	b.WriteString("  " + diffHintStyle.Render("[Esc] / [Enter]") + textStyle.Render("  Continuar ejecución del Swarm") + "\n")
+
+	return m.modalBox(b.String())
 }

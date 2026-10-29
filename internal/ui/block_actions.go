@@ -5,22 +5,23 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
+	"github.com/Yak036/mkd/internal/ai"
+	"github.com/Yak036/mkd/internal/clipboard"
 	"github.com/Yak036/mkd/internal/config"
 )
 
 // copyLastBlock implementa Ctrl+Y / /copy: extrae el último bloque de código
-// de las respuestas del asistente y lo copia al portapapeles.
+// de las respuestas del asistente y lo copia al portapapeles. Si no hay bloques
+// de código, copia la última respuesta en texto plano como fallback razonable.
 func (m Model) copyLastBlock() (tea.Model, tea.Cmd) {
 	blocks := m.conversationBlocks()
 	if len(blocks) == 0 {
-		m.notice = "No hay bloques de código en la conversación."
-		return m, nil
+		return m.copyLastResponse()
 	}
 
 	block, ok := lastCodeBlock(blocks)
 	if !ok {
-		m.notice = "No hay bloques de código en la conversación."
-		return m, nil
+		return m.copyLastResponse()
 	}
 
 	note, err := copyBlock(block)
@@ -31,6 +32,46 @@ func (m Model) copyLastBlock() (tea.Model, tea.Cmd) {
 	m.notes = append(m.notes, noteText(noteSuccess, note))
 	m.notice = note
 	m.refresh()
+	return m, nil
+}
+
+// copyLastPrompt copia el texto del último prompt enviado por el usuario al portapapeles.
+func (m Model) copyLastPrompt() (tea.Model, tea.Cmd) {
+	for i := len(m.history) - 1; i >= 0; i-- {
+		if m.history[i].Role == ai.RoleUser {
+			text := m.history[i].Content
+			if text == "" {
+				text = m.history[i].Display
+			}
+			if err := clipboard.Copy(text); err != nil {
+				m.notice = "No se pudo copiar el prompt: " + err.Error()
+				return m, nil
+			}
+			m.notice = "✓ Prompt copiado al portapapeles"
+			return m, nil
+		}
+	}
+	m.notice = "No hay prompts enviados en la conversación."
+	return m, nil
+}
+
+// copyLastResponse copia el texto plano de la última respuesta del asistente al portapapeles.
+func (m Model) copyLastResponse() (tea.Model, tea.Cmd) {
+	for i := len(m.history) - 1; i >= 0; i-- {
+		if m.history[i].Role == ai.RoleAssistant {
+			text := m.history[i].Content
+			if text == "" {
+				text = m.history[i].Display
+			}
+			if err := clipboard.Copy(text); err != nil {
+				m.notice = "No se pudo copiar la respuesta: " + err.Error()
+				return m, nil
+			}
+			m.notice = "✓ Respuesta copiada al portapapeles"
+			return m, nil
+		}
+	}
+	m.notice = "No hay respuestas del asistente en la conversación."
 	return m, nil
 }
 

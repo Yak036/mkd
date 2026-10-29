@@ -29,7 +29,7 @@ func TestSmokeRenderWorkspace(t *testing.T) {
 	if strings.TrimSpace(view) == "" {
 		t.Fatal("vista vacía")
 	}
-	for _, needle := range []string{"MKD", "TELEMETRÍA", "Tokens"} {
+	for _, needle := range []string{"MKD", "TELEMETRÍA", "Tokens", "SUB-AGENTES"} {
 		if !strings.Contains(view, needle) {
 			t.Fatalf("sidebar sin %q", needle)
 		}

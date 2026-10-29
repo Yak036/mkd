@@ -144,7 +144,7 @@ func (m Model) startSwarmMission(instruction string) (tea.Model, tea.Cmd) {
 	})
 	orchestrator.AttachCancel(cancel)
 	m.orchestrator = orchestrator
-	m.orchestratorCmd = runOrchestratorCmd(ctx, orchestrator, instruction, gen)
+	m.orchestratorCmd = runOrchestratorCmd(ctx, orchestrator, m.history, gen)
 
 	m.waiting = true
 	m.streaming = false
@@ -164,8 +164,8 @@ func (m Model) startSwarmMission(instruction string) (tea.Model, tea.Cmd) {
 	)
 }
 
-// runOrchestratorCmd ejecuta el tool loop del orquestador en background.
-func runOrchestratorCmd(ctx context.Context, o *swarm.Orchestrator, instruction string, gen int64) tea.Cmd {
+// runOrchestratorCmd ejecuta el tool loop del orquestador en background conservando el historial.
+func runOrchestratorCmd(ctx context.Context, o *swarm.Orchestrator, history []chatMessage, gen int64) tea.Cmd {
 	return func() tea.Msg {
 		client, err := swarm.AIClientFactory(o.Config())(config.SubAgentProfile{})
 		if err != nil {
@@ -175,9 +175,20 @@ func runOrchestratorCmd(ctx context.Context, o *swarm.Orchestrator, instruction 
 			return swarmDoneMsg{gen: gen, err: ai.ErrNotConfigured}
 		}
 
-		messages := []openai.ChatCompletionMessage{
-			{Role: openai.ChatMessageRoleSystem, Content: o.SystemPrompt()},
-			{Role: openai.ChatMessageRoleUser, Content: instruction},
+		messages := make([]openai.ChatCompletionMessage, 0, len(history)+1)
+		messages = append(messages, openai.ChatCompletionMessage{
+			Role:    openai.ChatMessageRoleSystem,
+			Content: o.SystemPrompt(),
+		})
+		for _, msg := range history {
+			role := openai.ChatMessageRoleUser
+			if msg.Role == ai.RoleAssistant {
+				role = openai.ChatMessageRoleAssistant
+			}
+			messages = append(messages, openai.ChatCompletionMessage{
+				Role:    role,
+				Content: msg.Content,
+			})
 		}
 		tools := o.Tools()
 
@@ -220,7 +231,15 @@ func (m Model) handleSwarmEvt(msg swarmEventMsg) (tea.Model, tea.Cmd) {
 		return m, waitSwarmEvent(m.bus.events.Events(), m.swarm.runGen)
 	}
 	ev := msg.ev
-	profile, _ := swarm.FindProfile(m.cfg.SubAgents, ev.AgentID)
+	profile, found := swarm.FindProfile(m.cfg.SubAgents, ev.AgentID)
+	if !found || profile.ID == "" {
+		profile = config.SubAgentProfile{
+			ID:    ev.AgentID,
+			Name:  ev.AgentID,
+			Icon:  "󰀐",
+			Color: "#06B6D4",
+		}
+	}
 
 	switch ev.Kind {
 	case swarm.EventMissionStarted:
@@ -229,6 +248,9 @@ func (m Model) handleSwarmEvt(msg swarmEventMsg) (tea.Model, tea.Cmd) {
 	case swarm.EventAgentQueued:
 		live := m.swarm.agent(profile)
 		live.Task = ev.Task
+		if ev.Instructions != "" {
+			live.Instructions = ev.Instructions
+		}
 		if live.Status == 0 && len(live.Steps) == 0 {
 			live.Status = swarm.StatusQueued
 		}
@@ -236,6 +258,9 @@ func (m Model) handleSwarmEvt(msg swarmEventMsg) (tea.Model, tea.Cmd) {
 	case swarm.EventAgentStarted:
 		live := m.swarm.agent(profile)
 		live.Task = ev.Task
+		if ev.Instructions != "" {
+			live.Instructions = ev.Instructions
+		}
 		live.Status = swarm.StatusRunning
 		if ev.Index > 0 {
 			live.Index = ev.Index
@@ -299,6 +324,10 @@ func (m Model) handleSwarmEvt(msg swarmEventMsg) (tea.Model, tea.Cmd) {
 		m.swarm.orchestratorStatus = "Misión completada"
 	}
 
+	m.sessionDirty = true
+	if ev.Kind == swarm.EventAgentCompleted || ev.Kind == swarm.EventAgentError || ev.Kind == swarm.EventMissionCompleted {
+		m.persistSession(false)
+	}
 	m.refresh()
 	return m, waitSwarmEvent(m.bus.events.Events(), m.swarm.runGen)
 }
@@ -456,9 +485,9 @@ func (m Model) swarmModeActive() bool {
 	return config.NormalizeSwarmMode(m.cfg.SwarmMode) == config.SwarmModeSwarm
 }
 
-// switchViewTab cambia la pestaña visible (0..9).
+// switchViewTab cambia la pestaña visible (0 = Orquestador, 1..N = sub-agentes).
 func (m Model) switchViewTab(tab int) (tea.Model, tea.Cmd) {
-	if tab < 0 || tab > 9 {
+	if tab < 0 {
 		return m, nil
 	}
 	if tab > 0 {
@@ -468,18 +497,22 @@ func (m Model) switchViewTab(tab int) (tea.Model, tea.Cmd) {
 		}
 	}
 	m.viewTab = tab
+	m.agentScroll = 0
+	if m.swarm.active() {
+		m.sessionDirty = true
+	}
 	m.refresh()
 	return m, nil
 }
 
-// nextViewTab rota entre las pestañas existentes (Tab en el inspector).
+// nextViewTab rota entre las pestañas existentes (0 = Orquestador, 1..N = sub-agentes).
 func (m Model) nextViewTab(delta int) (tea.Model, tea.Cmd) {
 	if !m.swarm.active() {
 		return m, nil
 	}
 	tabs := []int{0}
 	for _, live := range m.swarm.orderedAgents() {
-		if live.Index > 0 && live.Index <= 9 {
+		if live.Index > 0 {
 			tabs = append(tabs, live.Index)
 		}
 	}

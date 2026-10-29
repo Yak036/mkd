@@ -10,6 +10,8 @@ func withTempHome(t *testing.T) {
 	t.Helper()
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	t.Setenv("XDG_DATA_HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", home)
 }
 
 func TestSessionRoundTrip(t *testing.T) {
@@ -52,6 +54,103 @@ func TestSessionRoundTrip(t *testing.T) {
 	}
 	if _, err := LoadSession(session.ID); !os.IsNotExist(err) && err == nil {
 		t.Fatal("la sesión no se eliminó")
+	}
+}
+
+func TestSessionSwarmPersistence(t *testing.T) {
+	withTempHome(t)
+
+	session := Session{
+		ID:        NewSessionID(),
+		Title:     "Misión Swarm Test",
+		Cwd:       "/test/cwd",
+		Provider:  "openai",
+		Model:     "gpt-4o",
+		SwarmTabs: []string{"explorer", "coder"},
+		SwarmTab:  2,
+		Swarm: &SwarmSessionState{
+			Mission:            "mission-12345",
+			OrchestratorStatus: "Misión completada",
+			Delegations:        2,
+			Order:              []string{"explorer", "coder"},
+			SelectedTab:        2,
+			Running:            false,
+			Agents: map[string]SwarmTabSession{
+				"explorer": {
+					ID:           "explorer",
+					Name:         "Explorer Agent",
+					Icon:         "󰈞",
+					Color:        "#10B981",
+					Task:         "Investigar codebase",
+					Instructions: "Buscar archivos relevantes",
+					Status:       "done",
+					LastLine:     "Completado con éxito",
+					Output:       "Archivos encontrados: main.go, app.go",
+					Tokens:       1500,
+					DurationMs:   3200,
+					Index:        1,
+					Steps: []SwarmStepSession{
+						{Tool: "search_code", Args: `{"query":"main"}`, Done: true, Text: "ok"},
+					},
+				},
+				"coder": {
+					ID:           "coder",
+					Name:         "Coder Agent",
+					Icon:         "󰘦",
+					Color:        "#3B82F6",
+					Task:         "Escribir tests",
+					Instructions: "Implementar suite de pruebas",
+					Status:       "done",
+					LastLine:     "Tests escritos",
+					Output:       "```go\nfunc TestX() {}\n```",
+					Tokens:       2800,
+					DurationMs:   5100,
+					Index:        2,
+					Steps: []SwarmStepSession{
+						{Tool: "patch_file", Args: `{"path":"main_test.go"}`, Done: true, Text: "patched"},
+					},
+				},
+			},
+		},
+	}
+
+	path, err := SaveSession(session)
+	if err != nil {
+		t.Fatalf("SaveSession falló: %v", err)
+	}
+	if path == "" {
+		t.Fatal("ruta vacía retornada")
+	}
+
+	loaded, err := LoadSession(session.ID)
+	if err != nil {
+		t.Fatalf("LoadSession falló: %v", err)
+	}
+
+	if loaded.Swarm == nil {
+		t.Fatal("SwarmSessionState es nil")
+	}
+	if loaded.Swarm.Mission != "mission-12345" {
+		t.Fatalf("Mission esperada mission-12345, obtenida %s", loaded.Swarm.Mission)
+	}
+	if loaded.Swarm.SelectedTab != 2 || loaded.SwarmTab != 2 {
+		t.Fatalf("SelectedTab no coincide: Swarm.SelectedTab=%d, SwarmTab=%d", loaded.Swarm.SelectedTab, loaded.SwarmTab)
+	}
+	if len(loaded.Swarm.Order) != 2 || loaded.Swarm.Order[0] != "explorer" || loaded.Swarm.Order[1] != "coder" {
+		t.Fatalf("Order no coincide: %v", loaded.Swarm.Order)
+	}
+	if len(loaded.Swarm.Agents) != 2 {
+		t.Fatalf("se esperaban 2 agentes, se obtuvieron %d", len(loaded.Swarm.Agents))
+	}
+	coder := loaded.Swarm.Agents["coder"]
+	if coder.ID != "coder" || coder.Tokens != 2800 || coder.DurationMs != 5100 {
+		t.Fatalf("coder mal deserializado: %+v", coder)
+	}
+	if len(coder.Steps) != 1 || coder.Steps[0].Tool != "patch_file" {
+		t.Fatalf("pasos de coder incorrectos: %+v", coder.Steps)
+	}
+	if !strings.Contains(coder.Output, "func TestX()") {
+		t.Fatalf("output de coder no contiene código: %s", coder.Output)
 	}
 }
 
