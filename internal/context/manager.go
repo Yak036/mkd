@@ -233,18 +233,35 @@ func (m *Manager) Prepare(summary string, history []ai.Message) (Prepared, Usage
 		System:  system,
 		Files:   filesBlock,
 		Summary: strings.TrimSpace(summary),
-		History: history,
+		History: withoutSummaryMessages(history),
 	}
 
 	usage := Usage{Files: m.Files()}
 	usage.SystemTokens = EstimateTokens(system)
 	usage.FileTokens = EstimateTokens(filesBlock)
 	usage.SummaryTokens = EstimateTokens(prepared.Summary)
-	for _, msg := range history {
+	for _, msg := range prepared.History {
 		usage.HistoryTokens += EstimateTokens(msg.Content) + 4
 	}
 	usage.TotalTokens = usage.SystemTokens + usage.FileTokens + usage.SummaryTokens + usage.HistoryTokens
 	return prepared, usage
+}
+
+// withoutSummaryMessages elimina mensajes de resumen heredados de sesiones
+// guardadas antes de que el resumen viviera solo en Summary. Si se envía además
+// del bloque <context_summary>, el contexto aparece duplicado.
+func withoutSummaryMessages(history []ai.Message) []ai.Message {
+	if len(history) == 0 {
+		return history
+	}
+	cleaned := make([]ai.Message, 0, len(history))
+	for _, msg := range history {
+		if strings.HasPrefix(strings.TrimSpace(msg.Content), "<context_summary>") {
+			continue
+		}
+		cleaned = append(cleaned, msg)
+	}
+	return cleaned
 }
 
 // Messages convierte un ensamblado en el slice que consume la API.

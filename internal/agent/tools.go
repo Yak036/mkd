@@ -16,6 +16,34 @@ const (
 	ToolRunCommand = "run_command"
 )
 
+// AskUserTool es la herramienta de preguntas interactivas. Se mantiene aparte
+// de Tools porque no modifica disco ni ejecuta procesos y no se auto-aprueba:
+// su única función es devolverle una decisión al agente.
+var AskUserTool = functionTool(ToolAskUser,
+	"Pregunta algo al usuario y espera su respuesta antes de continuar. Úsala cuando "+
+		"falte una preferencia o decisión que cambie el resultado (alcance, enfoque, "+
+		"librería, estilo) y no puedas deducirla del contexto. Devuelve la opción elegida "+
+		"o el texto libre. No la uses para pedir permiso de escritura o ejecución: eso ya "+
+		"tiene su propio flujo de aprobación.",
+	schema(map[string]any{
+		"question": prop("string", "Pregunta concreta y breve dirigida al usuario."),
+		"header":   prop("string", "Etiqueta corta (máximo ~24 caracteres) para el modal."),
+		"options": map[string]any{
+			"type":        "array",
+			"description": "Alternativas entre las que elegir. Máximo 6. Puede ir vacío para forzar texto libre.",
+			"maxItems":    MaxQuestionOptions,
+			"items": map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"label":       prop("string", "Texto corto de la opción; es lo que se devuelve."),
+					"description": prop("string", "Cuándo elegir esta opción (opcional)."),
+				},
+				"required": []string{"label"},
+			},
+		},
+		"allow_custom": prop("boolean", "Permite además escribir una respuesta libre (por defecto true si no hay opciones)."),
+	}, "question"))
+
 // Tools es el catálogo que se envía al modelo en cada petición
 // (openai.ChatCompletionRequest.Tools). Las descripciones son parte del
 // contrato: el modelo elige la herramienta por nombre y descripción.

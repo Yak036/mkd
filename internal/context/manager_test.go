@@ -93,3 +93,39 @@ func TestRefreshFilesDetectsChange(t *testing.T) {
 		t.Fatalf("no detectó el cambio: %v", changed)
 	}
 }
+
+// El resumen compactado se envía una sola vez: como <context_summary>, nunca
+// duplicado como mensaje del historial.
+func TestPrepareDoesNotDuplicateSummary(t *testing.T) {
+	mgr := NewManager("", t.TempDir(), 1000)
+	history := []ai.Message{
+		{Role: ai.RoleUser, Content: "<context_summary>\nviejo\n</context_summary>"},
+		{Role: ai.RoleUser, Content: "nuevo"},
+	}
+
+	prepared, _ := mgr.Prepare("resumen vivo", history)
+	messages := prepared.Messages()
+
+	summaryCount := 0
+	for _, msg := range messages {
+		if strings.Contains(msg.Content, "<context_summary>") {
+			summaryCount++
+		}
+	}
+	if summaryCount != 1 {
+		t.Fatalf("bloques de resumen = %d, want 1: %#v", summaryCount, messages)
+	}
+	if len(prepared.History) != 1 || prepared.History[0].Content != "nuevo" {
+		t.Fatalf("historial mal filtrado: %#v", prepared.History)
+	}
+}
+
+// Compact no inyecta el resumen como mensaje: solo devuelve los recientes.
+func TestCompactLeavesSummaryOutOfHistory(t *testing.T) {
+	if got := withoutSummaryMessages([]ai.Message{
+		{Role: ai.RoleUser, Content: "hola"},
+		{Role: ai.RoleUser, Content: "  <context_summary>x</context_summary>"},
+	}); len(got) != 1 {
+		t.Fatalf("withoutSummaryMessages = %#v", got)
+	}
+}

@@ -256,7 +256,7 @@ func (c *Client) StreamMessages(ctx context.Context, messages []openai.ChatCompl
 
 	stream, err := c.api.CreateChatCompletionStream(ctx, openai.ChatCompletionRequest{
 		Model:    c.Model,
-		Messages: messages,
+		Messages: SanitizeMessages(messages),
 		Stream:   true,
 	})
 	if err != nil {
@@ -338,7 +338,7 @@ func (c *Client) StreamWithTools(ctx context.Context, messages []openai.ChatComp
 
 	stream, err := c.api.CreateChatCompletionStream(ctx, openai.ChatCompletionRequest{
 		Model:    c.Model,
-		Messages: messages,
+		Messages: SanitizeMessages(messages),
 		Stream:   true,
 		Tools:    tools,
 	})
@@ -428,7 +428,7 @@ func (c *Client) CompleteMessagesTools(ctx context.Context, messages []openai.Ch
 
 	response, err := c.api.CreateChatCompletion(ctx, openai.ChatCompletionRequest{
 		Model:    c.Model,
-		Messages: messages,
+		Messages: SanitizeMessages(messages),
 		Tools:    tools,
 	})
 	if err != nil {
@@ -461,7 +461,7 @@ func (c *Client) CompleteMessages(ctx context.Context, messages []openai.ChatCom
 
 	response, err := c.api.CreateChatCompletion(ctx, openai.ChatCompletionRequest{
 		Model:    c.Model,
-		Messages: messages,
+		Messages: SanitizeMessages(messages),
 	})
 	if err != nil {
 		return "", fmt.Errorf("API %s (%s): %w", c.Model, c.ProviderName, normalizeError(err))
@@ -472,7 +472,82 @@ func (c *Client) CompleteMessages(ctx context.Context, messages []openai.ChatCom
 	return response.Choices[0].Message.Content, nil
 }
 
-// FetchAvailableModels consulta los modelos disponibles para el proveedor activo.
+// SanitizeMessages arregla el historial antes de enviarlo al proveedor.
+//
+// Si un turno se cancela, se cambia de sesión o falla una ronda entre la
+// petición de una herramienta y su resultado, quedan mensajes assistant con
+// tool_calls sin su role=tool correspondiente (y viceversa). Los proveedores
+// compatibles con OpenAI rechazan esa secuencia, así que:
+//
+//	assistant(tool_calls=[A,B]) ──► ¿llega role=tool A?  sí ──► se conserva
+//	                                     │                  no ──► se descarta la llamada
+//	role=tool huérfano (sin assistant) ──────────────────────────► se descarta
+//
+// Un assistant cuyos tool_calls se descartan todos se convierte en texto normal
+// para no perder lo que ya había explicado el modelo.
+func SanitizeMessages(messages []openai.ChatCompletionMessage) []openai.ChatCompletionMessage {
+	if len(messages) == 0 {
+		return messages
+	}
+
+	out := make([]openai.ChatCompletionMessage, 0, len(messages))
+	for i := 0; i < len(messages); i++ {
+		msg := messages[i]
+		if msg.Role == openai.ChatMessageRoleTool {
+			// Huérfano: no hay assistant previo con esa llamada pendiente.
+			continue
+		}
+		if msg.Role != openai.ChatMessageRoleAssistant || len(msg.ToolCalls) == 0 {
+			out = append(out, msg)
+			continue
+		}
+
+		// Recoge los resultados que sí siguieron a esta ronda.
+		answered := make(map[string]bool, len(msg.ToolCalls))
+		end := i + 1
+		for end < len(messages) && messages[end].Role == openai.ChatMessageRoleTool {
+			answered[messages[end].ToolCallID] = true
+			end++
+		}
+
+		kept := make([]openai.ToolCall, 0, len(msg.ToolCalls))
+		for _, call := range msg.ToolCalls {
+			if answered[call.ID] {
+				kept = append(kept, call)
+			}
+		}
+		if len(kept) == 0 {
+			if strings.TrimSpace(msg.Content) != "" {
+				out = append(out, openai.ChatCompletionMessage{
+					Role:    openai.ChatMessageRoleAssistant,
+					Content: msg.Content,
+				})
+			}
+			i = end - 1
+			continue
+		}
+
+		msg.ToolCalls = kept
+		out = append(out, msg)
+		for j := i + 1; j < end; j++ {
+			for _, call := range kept {
+				if messages[j].ToolCallID == call.ID {
+					out = append(out, messages[j])
+					break
+				}
+			}
+		}
+		i = end - 1
+	}
+	return out
+}
+
+// FetchAvailableModels consulta GET /v1/models y devuelve IDs ordenados.
+//
+// Algunos proveedores (DeepInfra) exponen cientos de modelos mezclando imagen,
+// embeddings y versiones deprecadas. Si detectamos su catálogo público en
+// /models/list lo usamos para quedarnos solo con los de texto activos; si no,
+// devolvemos la lista del endpoint OpenAI tal cual.
 func (c *Client) FetchAvailableModels(ctx context.Context) ([]string, error) {
 	if c.isCodex() {
 		token, accountID, err := c.ensureCodexAuth(ctx)

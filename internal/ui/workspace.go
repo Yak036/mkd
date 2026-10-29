@@ -367,13 +367,8 @@ func (m Model) loadSession(id string) (Model, tea.Cmd) {
 		return m, nil
 	}
 
-	if m.cancel != nil {
-		m.cancel()
-		m.cancel = nil
-	}
+	m.cancelTurn()
 	m.streamCh = nil
-	m.waiting = false
-	m.streaming = false
 	m.cancelled = false
 	m.compacting = false
 	m.stream.Reset()
@@ -421,13 +416,8 @@ func (m Model) loadSession(id string) (Model, tea.Cmd) {
 
 func (m Model) newSession() (Model, tea.Cmd) {
 	m.persistSession(false)
-	if m.cancel != nil {
-		m.cancel()
-		m.cancel = nil
-	}
+	m.cancelTurn()
 	m.streamCh = nil
-	m.waiting = false
-	m.streaming = false
 	m.cancelled = false
 	m.compacting = false
 	m.stream.Reset()
@@ -546,6 +536,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handleAgentToolDone(msg)
 
 	case agentRoundDoneMsg:
+		if m.modal.kind == modalQuestion {
+			return m, nil
+		}
 		return m.handleAgentRoundDone(msg)
 
 	case commitContextMsg:
@@ -568,6 +561,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case swarmPermissionMsg:
 		return m.handleSwarmPermission(msg)
+
+	case swarmAskMsg:
+		return m.handleSwarmAsk(msg)
 
 	case spinner.TickMsg:
 		if !m.waiting && !m.modal.models.loading && !m.agent.requested && !m.swarm.running {
@@ -722,6 +718,11 @@ func (m Model) needsOnboarding() bool {
 }
 
 func (m Model) quit() (Model, tea.Cmd) {
+	// Una pregunta o un turno abiertos al salir quedan cancelados: el usuario
+	// volverá a la sesión sin acciones a medio resolver.
+	if m.modal.kind == modalQuestion {
+		m.answerPendingQuestionBeforeQuit()
+	}
 	if m.cancel != nil {
 		m.cancel()
 	}
@@ -822,16 +823,19 @@ func (m Model) updateWorkspaceKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.cancel()
 			}
 			m.swarm.orchestratorStatus = "Cancelada por el usuario"
-			m.refresh()
-			return m, nil
-		}
-		if m.streaming || m.waiting {
-			m.cancelled = true
-			if m.cancel != nil {
-				m.cancel()
+			if m.modal.kind == modalQuestion {
+				m.modal.kind = modalNone
+				m.modal.question = questionModal{}
 			}
 			m.refresh()
-			return m, nil
+			return m, m.textarea.Focus()
+		}
+		if m.streaming || m.waiting || m.modal.kind == modalQuestion {
+			m.cancelled = true
+			m.cancelTurn()
+			m.notes = append(m.notes, note{Kind: noteInfo, Text: "— turno cancelado —"})
+			m.refresh()
+			return m, m.textarea.Focus()
 		}
 		return m.quit()
 
@@ -858,6 +862,13 @@ func (m Model) submitInput() (tea.Model, tea.Cmd) {
 	}
 	if m.compacting {
 		m.notice = "Espera a que termine la compactación."
+		return m, nil
+	}
+	// Un solo turno a la vez: mezclar un envío nuevo con un stream, una ronda
+	// de herramientas o un permiso pendiente rompe la secuencia
+	// assistant(tool_calls) → role=tool que exige el proveedor.
+	if m.busy() {
+		m.notice = "Espera a que termine el turno actual (Esc para cancelar)."
 		return m, nil
 	}
 	m.textarea.Reset()
@@ -1363,13 +1374,8 @@ func (m *Model) failStream(err error) {
 }
 
 func (m *Model) clearConversation() {
-	if m.cancel != nil {
-		m.cancel()
-		m.cancel = nil
-	}
+	m.cancelTurn()
 	m.streamCh = nil
-	m.waiting = false
-	m.streaming = false
 	m.cancelled = false
 	m.compacting = false
 	m.hideSlashMenu()
@@ -1625,6 +1631,9 @@ func (m Model) startAutoCompact() (Model, tea.Cmd) {
 	if m.compacting || m.streaming || m.waiting || !m.configured() {
 		return m, nil
 	}
+	if !m.shouldAutoCompact() {
+		return m, nil
+	}
 	if len(m.history) <= mkdcontext.CompactKeepRecent {
 		return m, nil
 	}
@@ -1697,6 +1706,31 @@ func (m *Model) refreshUsage() {
 	m.ctxMgr.SetMaxTokens(m.cfg.CompactThreshold)
 	_, usage := m.ctxMgr.Prepare(m.summary, m.apiHistory())
 	m.usage = usage
+}
+
+// answerPendingQuestionBeforeQuit registra la cancelación en el historial
+// antes de persistir la sesión, sin relanzar el turno.
+func (m *Model) answerPendingQuestionBeforeQuit() {
+	qm := m.modal.question
+	m.modal.kind = modalNone
+	m.modal.question = questionModal{}
+	content := agent.FormatAnswer(qm.question, agent.Answer{CallID: qm.callID, Cancelled: true})
+	m.history = append(m.history, chatMessage{
+		Role:    ai.RoleUser,
+		Content: content,
+		Display: "↳ pregunta cancelada al salir",
+	})
+	m.agent.active = false
+	m.agent.messages = nil
+	m.agent.pending = nil
+	m.agent.requested = false
+	m.sessionDirty = true
+}
+
+// busy indica que hay trabajo del modelo en curso cuyo turno no debe
+// entrelazarse con un mensaje nuevo.
+func (m Model) busy() bool {
+	return m.streaming || m.waiting || m.swarm.running || m.modal.kind == modalDiff || m.modal.kind == modalQuestion
 }
 
 func (m Model) configured() bool {
@@ -1992,6 +2026,9 @@ func (m Model) statusView(width int) string {
 	hints := "Ctrl+P Paleta │ Ctrl+T Agents │ Alt+S Swarm │ Ctrl+G Commit │ Ctrl+O MCP │ Esc Salir"
 
 	switch {
+	case m.modal.kind == modalQuestion:
+		mode = "PREGUNTA"
+		hints = "↑/↓ elegir · 1-6 opción · Enter responder · Esc cancelar"
 	case m.modal.kind != modalNone:
 		mode = "MODAL"
 		hints = "Esc cerrar · atajos dentro del modal"

@@ -42,9 +42,15 @@ func (r CompactResult) Freed() int {
 	return freed
 }
 
-// Compact summarize el 70% más antiguo del historial y conserva intactos los
-// últimos CompactKeepRecent mensajes. La parte antigua se reemplaza por un
-// único mensaje de contexto resumido.
+// Compact resume el 70% más antiguo del historial y conserva intactos los
+// últimos CompactKeepRecent mensajes.
+//
+//	antes:  [M1 M2 M3 M4 M5 M6 M7 M8 M9 M10]
+//	después:                       [M7 M8 M9 M10]  + summary="…M1..M6…"
+//
+// El resumen no se inserta como mensaje del historial: Manager.Prepare lo
+// inyecta como bloque <context_summary> una sola vez. Duplicarlo en ambos
+// sitios gastaba ventana y desorientaba al modelo.
 func (m *Manager) Compact(ctx context.Context, client *ai.Client, summary string, history []ai.Message) ([]ai.Message, string, CompactResult, error) {
 	if client == nil || !client.Ready() {
 		return history, summary, CompactResult{}, ai.ErrNotConfigured
@@ -87,10 +93,7 @@ func (m *Manager) Compact(ctx context.Context, client *ai.Client, summary string
 		return history, summary, CompactResult{}, fmt.Errorf("el modelo devolvió un resumen vacío")
 	}
 
-	compacted := append([]ai.Message{{
-		Role:    ai.RoleUser,
-		Content: "<context_summary>\n" + text + "\n</context_summary>",
-	}}, recent...)
+	compacted := append([]ai.Message(nil), recent...)
 
 	after := historyTokens(compacted)
 	return compacted, text, CompactResult{
