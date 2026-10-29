@@ -19,6 +19,30 @@ func TestDefaultsContainsClaude(t *testing.T) {
 	if len(claude.Models) == 0 {
 		t.Errorf("Models no debe estar vacío")
 	}
+
+	antigravity, ok := cfg.Providers["antigravity"]
+	if !ok {
+		t.Fatalf("se esperaba que Defaults contuviera el proveedor 'antigravity'")
+	}
+	if antigravity.ActiveModel == "" {
+		t.Errorf("ActiveModel de Antigravity no debe estar vacío")
+	}
+}
+
+func TestIsAntigravity(t *testing.T) {
+	cases := []struct {
+		url  string
+		want bool
+	}{
+		{"local://agy", true},
+		{"antigravity", true},
+		{"https://api.anthropic.com/v1", false},
+	}
+	for _, tc := range cases {
+		if got := IsAntigravity(tc.url); got != tc.want {
+			t.Errorf("IsAntigravity(%q) = %v; want %v", tc.url, got, tc.want)
+		}
+	}
 }
 
 func TestIsClaude(t *testing.T) {

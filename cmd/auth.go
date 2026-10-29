@@ -10,6 +10,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/Yak036/mkd/internal/ai"
+	"github.com/Yak036/mkd/internal/antigravity"
 	"github.com/Yak036/mkd/internal/claude"
 	"github.com/Yak036/mkd/internal/codex"
 	"github.com/Yak036/mkd/internal/config"
@@ -214,6 +215,71 @@ var authClaudeCmd = &cobra.Command{
 	},
 }
 
+var authAntigravityCmd = &cobra.Command{
+	Use:     "antigravity",
+	Aliases: []string{"agy"},
+	Short:   "Detecta y vincula tu cuenta de Google Antigravity (CLI agy)",
+	Example: `  # Detectar y activar tu sesión de Antigravity:
+  mkd auth antigravity
+
+  # O con su alias corto:
+  mkd auth agy`,
+	Args: cobra.NoArgs,
+	RunE: func(cmd *cobra.Command, args []string) error {
+		cfg, err := config.LoadFile()
+		if err != nil {
+			return err
+		}
+
+		fmt.Println("Buscando instalación y cuenta de Google Antigravity…")
+		info, err := antigravity.LoadLocalAuth()
+		if err != nil {
+			return fmt.Errorf("no se pudo inicializar Antigravity: %w", err)
+		}
+
+		fmt.Printf("✓ Binario de Antigravity encontrado en: %s\n", info.AgyPath)
+		fmt.Printf("✓ Cuenta de Google detectada: %s\n", info.Account)
+
+		p, ok := cfg.Providers["antigravity"]
+		if !ok {
+			p = config.ProviderConfig{
+				Name:        "Antigravity (Google)",
+				BaseURL:     "local://agy",
+				ActiveModel: antigravity.DefaultModel,
+			}
+		}
+		p.AccountID = info.Account
+		p.BaseURL = "local://agy"
+		cfg.Providers["antigravity"] = p
+		cfg.ActiveProvider = "antigravity"
+
+		fmt.Print("Sincronizando catálogo de modelos de Antigravity… ")
+		ctx, cancel := context.WithTimeout(cmd.Context(), 10*time.Second)
+		defer cancel()
+
+		if models, err := antigravity.FetchModels(ctx); err == nil && len(models) > 0 {
+			p.Models = models
+			if !containsString(p.Models, p.ActiveModel) {
+				p.ActiveModel = p.Models[0]
+			}
+			cfg.Providers["antigravity"] = p
+			fmt.Printf("%d modelos sincronizados.\n", len(models))
+		} else {
+			fmt.Println("usando modelos base por defecto.")
+		}
+
+		path, err := config.Save(cfg)
+		if err != nil {
+			return fmt.Errorf("no se pudo guardar la configuración: %w", err)
+		}
+
+		fmt.Printf("\n✓ Proveedor 'antigravity' activado y configurado en %s\n", path)
+		fmt.Printf("  Modelo activo: %s\n", p.ActiveModel)
+		fmt.Println("\nPuedes iniciar la TUI ejecutando: mkd chat")
+		return nil
+	},
+}
+
 var authStatusCmd = &cobra.Command{
 	Use:   "status",
 	Short: "Muestra el estado de autenticación y suscripción",
@@ -290,6 +356,30 @@ var authStatusCmd = &cobra.Command{
 			fmt.Println("  (Puedes importarla a MKD con: mkd auth claude --import)")
 		}
 
+		// Estado de Antigravity
+		pa, hasAgy := cfg.Providers["antigravity"]
+		fmt.Println("\n[Antigravity (Google)]")
+		if hasAgy {
+			fmt.Println("  Estado: Configurado en MKD")
+			if pa.AccountID != "" {
+				fmt.Printf("  Cuenta vinculada: %s\n", pa.AccountID)
+			}
+			fmt.Printf("  Modelo activo: %s\n", pa.ActiveModel)
+			if len(pa.Models) > 0 {
+				fmt.Printf("  Modelos: %s\n", strings.Join(pa.Models, ", "))
+			}
+		} else {
+			fmt.Println("  Estado: No configurado en config.json")
+		}
+
+		// Chequear si existe sesión local de Antigravity
+		if info, err := antigravity.LoadLocalAuth(); err == nil {
+			fmt.Println("\n[Sesión externa de Google Antigravity detectada en el sistema]")
+			fmt.Printf("  Cuenta: %s\n", info.Account)
+			fmt.Printf("  Binario agy: %s\n", info.AgyPath)
+			fmt.Println("  (Puedes activarla en MKD con: mkd auth antigravity)")
+		}
+
 		return nil
 	},
 }
@@ -301,6 +391,7 @@ func init() {
 
 	authCmd.AddCommand(authCodexCmd)
 	authCmd.AddCommand(authClaudeCmd)
+	authCmd.AddCommand(authAntigravityCmd)
 	authCmd.AddCommand(authStatusCmd)
 }
 

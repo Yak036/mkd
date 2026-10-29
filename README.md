@@ -130,9 +130,13 @@ y se puede sobreescribir con variables de entorno.
 | `openai` | `https://api.openai.com/v1` | API Key de desarrollador |
 | `codex` | `https://chatgpt.com/backend-api/codex` | Suscripción ChatGPT Plus/Pro/Team (OAuth o ~/.codex) |
 | `claude` | `https://api.anthropic.com/v1` | Suscripción Claude Pro/Team o token setup (`sk-ant-oat...`) |
+| `antigravity` | `local://agy` | CLI local de Google Antigravity (`agy`) y cuenta Google activa |
 | `ollama` | `http://localhost:11434/v1` | Sin API key |
 
 ```bash
+# Autenticación con Google Antigravity (CLI agy local):
+mkd auth antigravity       # Detecta automáticamente tu cuenta Google y sincroniza 13 modelos
+
 # Autenticación con tu suscripción de Claude (cuota plana Pro/Team/Enterprise):
 mkd auth claude           # Inicia sesión en el navegador con OAuth 2.0 PKCE
 mkd auth claude --import  # O importa credenciales existentes de Claude Code (~/.claude)

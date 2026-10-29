@@ -46,7 +46,7 @@ const (
 )
 
 // DefaultProviderOrder mantiene un orden estable para la UI y los selectores.
-var DefaultProviderOrder = []string{"deepinfra", "openrouter", "openai", "codex", "claude", "ollama"}
+var DefaultProviderOrder = []string{"deepinfra", "openrouter", "openai", "codex", "claude", "antigravity", "ollama"}
 
 // ProviderConfig agrupa credenciales, endpoint y modelos de un proveedor.
 type ProviderConfig struct {
@@ -224,6 +224,24 @@ func Defaults() Config {
 					"claude-3-5-sonnet-20241022",
 					"claude-3-5-haiku-20241022",
 					"claude-3-opus-20240229",
+				},
+			},
+			"antigravity": {
+				Name:        "Antigravity (Google)",
+				BaseURL:     "local://agy",
+				ActiveModel: "gemini-3.8-flash-high",
+				Models: []string{
+					"gemini-3.8-flash-high",
+					"gemini-3.8-flash-medium",
+					"gemini-3.8-flash-low",
+					"gemini-4-argon-high",
+					"gemini-4-argon-medium",
+					"gemini-4-argon-low",
+					"claude-sonnet-5-5-high",
+					"claude-sonnet-5-5-medium",
+					"claude-opus-5-5-high",
+					"claude-opus-5-5-medium",
+					"gpt-oss-120b-medium",
 				},
 			},
 			"ollama": {
@@ -485,6 +503,9 @@ func (p ProviderConfig) Configured() bool {
 	if IsClaude(p.BaseURL) {
 		return hasLocalClaudeAuth()
 	}
+	if IsAntigravity(p.BaseURL) {
+		return hasLocalAntigravityAuth()
+	}
 	return false
 }
 
@@ -524,6 +545,26 @@ func hasLocalClaudeAuth() bool {
 		}
 	}
 	return false
+}
+
+// hasLocalAntigravityAuth comprueba si existe una cuenta activa de Antigravity o el binario agy.
+func hasLocalAntigravityAuth() bool {
+	home, err := os.UserHomeDir()
+	if err == nil {
+		if _, err := os.Stat(filepath.Join(home, ".gemini", "google_accounts.json")); err == nil {
+			return true
+		}
+	}
+	if _, err := os.Stat("/home/ramces/.local/bin/agy"); err == nil {
+		return true
+	}
+	return false
+}
+
+// IsAntigravity indica si la URL o el proveedor apunta a Antigravity (Google agy).
+func IsAntigravity(baseURL string) bool {
+	lower := strings.ToLower(baseURL)
+	return strings.Contains(lower, "antigravity") || strings.Contains(lower, "agy")
 }
 
 // IsClaude indica si la URL o el proveedor apunta al endpoint de Anthropic Claude.
@@ -623,6 +664,8 @@ func DisplayName(key string) string {
 		return "Codex (ChatGPT)"
 	case "claude":
 		return "Claude (Anthropic)"
+	case "antigravity", "agy":
+		return "Antigravity (Google)"
 	case "ollama":
 		return "Ollama"
 	default:
@@ -652,6 +695,8 @@ func inferProvider(baseURL string) (key, name string) {
 		return "codex", "Codex (ChatGPT)"
 	case strings.Contains(lower, "api.anthropic.com") || strings.Contains(lower, "claude"):
 		return "claude", "Claude (Anthropic)"
+	case strings.Contains(lower, "antigravity") || strings.Contains(lower, "agy"):
+		return "antigravity", "Antigravity (Google)"
 	case strings.Contains(lower, "api.openai.com"):
 		return "openai", "OpenAI"
 	case IsLocal(baseURL):

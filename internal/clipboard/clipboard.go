@@ -33,10 +33,17 @@ const copyTimeout = 3 * time.Second
 // errNoBackend se devuelve cuando ningún método logró copiar.
 var errNoBackend = errors.New("clipboard: ningún método de portapapeles disponible")
 
+// CopyFn permite sobreescribir la función de copia en pruebas unitarias.
+var CopyFn = defaultCopy
+
 // Copy intenta copiar text al portapapeles probando los backends en orden.
 // Devuelve nil si OSC 52 se emitió con stdout como TTY o si algún binario
 // del sistema terminó correctamente. Solo devuelve error si todos fallan.
 func Copy(text string) error {
+	return CopyFn(text)
+}
+
+func defaultCopy(text string) error {
 	if text == "" {
 		return nil
 	}

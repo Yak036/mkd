@@ -28,6 +28,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
 
+	"github.com/Yak036/mkd/internal/clipboard"
 	"github.com/Yak036/mkd/internal/config"
 	"github.com/Yak036/mkd/internal/swarm"
 )
@@ -47,11 +48,23 @@ const (
 	agentFieldName agentEditorField = iota
 	agentFieldIcon
 	agentFieldColor
+	agentFieldProvider
 	agentFieldModel
 	agentFieldTools
 	agentFieldPrompt
 	agentFieldCount
 )
+
+// availableAgentTools define el catálogo estándar de herramientas seleccionables para sub-agentes.
+var availableAgentTools = []string{
+	"read_file",
+	"list_dir",
+	"search_code",
+	"patch_file",
+	"write_file",
+	"run_command",
+	"mcp:*",
+}
 
 // agentModal es el estado del gestor de equipo.
 type agentModal struct {
@@ -63,14 +76,18 @@ type agentModal struct {
 	err      string
 
 	// Editor.
-	editing config.SubAgentProfile
-	field   agentEditorField
-	name    textinput.Model
-	icon    textinput.Model
-	color   textinput.Model
-	model   textinput.Model
-	tools   textinput.Model
-	prompt  textarea.Model
+	editing       config.SubAgentProfile
+	field         agentEditorField
+	name          textinput.Model
+	icon          textinput.Model
+	color         textinput.Model
+	providerIndex int
+	providers     []string
+	model         textinput.Model
+	toolsList     []string
+	toolsSelected map[string]bool
+	toolCursor    int
+	prompt        textarea.Model
 
 	// creating marca que el editor está creando un perfil nuevo.
 	creating bool
@@ -124,9 +141,33 @@ func (m Model) updateAgentModal(msg tea.KeyMsg) (Model, tea.Cmd) {
 		return m.startNewAgentProfile()
 	case msg.String() == "ctrl+d":
 		return m.deleteAgentProfile()
+	case msg.String() == "ctrl+y", msg.String() == "ctrl+c", msg.String() == "c", msg.String() == "y":
+		return m.copyAgentPrompt()
 	case key.Matches(msg, keyEnter), msg.String() == "tab":
 		return m.editAgentProfile()
 	}
+	return m, nil
+}
+
+// copyAgentPrompt copia el prompt específico (descripción) del sub-agente seleccionado al portapapeles.
+func (m Model) copyAgentPrompt() (Model, tea.Cmd) {
+	am := &m.modal.agents
+	profile, ok := am.selectedProfile()
+	if !ok {
+		return m, nil
+	}
+	text := strings.TrimSpace(profile.RolePrompt)
+	if text == "" {
+		am.err = "El sub-agente seleccionado no tiene un prompt específico."
+		return m, nil
+	}
+	if err := clipboard.Copy(text); err != nil {
+		am.err = "Error al copiar: " + err.Error()
+		return m, nil
+	}
+	am.err = ""
+	am.status = fmt.Sprintf("✓ Prompt de [%s] copiado al portapapeles (%d caracteres)", profile.ID, len(text))
+	m.notice = fmt.Sprintf("✓ Prompt de [%s] copiado al portapapeles", profile.ID)
 	return m, nil
 }
 
@@ -252,16 +293,76 @@ func (m *Model) buildAgentEditor() {
 	am := &m.modal.agents
 	profile := am.editing
 
+	// Lista de proveedores: "" representa (global) y únicamente proveedores con conexión exitosa
+	providers := []string{""}
+	seen := map[string]bool{"": true}
+	for _, key := range m.cfg.ConnectedProviderKeys() {
+		if !seen[key] {
+			providers = append(providers, key)
+			seen[key] = true
+		}
+	}
+	// Si el perfil editado ya tenía un proveedor específico previo, se conserva
+	// para no romper configuraciones existentes
+	if profile.Provider != "" && !seen[profile.Provider] {
+		providers = append(providers, profile.Provider)
+		seen[profile.Provider] = true
+	}
+	am.providers = providers
+	am.providerIndex = 0
+	for i, p := range providers {
+		if p == profile.Provider {
+			am.providerIndex = i
+			break
+		}
+	}
+
 	am.name = newInput("nombre visible (ej. Backend Go Specialist)")
 	am.name.SetValue(profile.Name)
 	am.icon = newInput("icono Nerd Font (ej. 󰙨)")
 	am.icon.SetValue(profile.Icon)
 	am.color = newInput("#RRGGBB")
 	am.color.SetValue(profile.Color)
-	am.model = newInput("modelo (vacío = global)")
+	am.model = newInput("modelo (vacío = global · Tab/◀▶ para autocompletar)")
 	am.model.SetValue(profile.Model)
-	am.tools = newInput("read_file,search_code,patch_file (vacío = todas)")
-	am.tools.SetValue(strings.Join(profile.AllowedTools, ","))
+
+	// Selector interactivo de herramientas (Tools).
+	am.toolsSelected = make(map[string]bool)
+	am.toolsList = make([]string, len(availableAgentTools))
+	copy(am.toolsList, availableAgentTools)
+
+	// Conservar cualquier herramienta personalizada o específica del perfil existente.
+	for _, t := range profile.AllowedTools {
+		t = strings.TrimSpace(t)
+		if t == "" {
+			continue
+		}
+		if t == "*" {
+			for _, def := range availableAgentTools {
+				am.toolsSelected[def] = true
+			}
+			continue
+		}
+		found := false
+		for _, existing := range am.toolsList {
+			if existing == t {
+				found = true
+				break
+			}
+		}
+		if !found {
+			am.toolsList = append(am.toolsList, t)
+		}
+		am.toolsSelected[t] = true
+	}
+
+	// Si el perfil no tenía herramientas explícitas (nuevo o vacío), marcar lectura por defecto.
+	if len(profile.AllowedTools) == 0 {
+		am.toolsSelected["read_file"] = true
+		am.toolsSelected["list_dir"] = true
+		am.toolsSelected["search_code"] = true
+	}
+	am.toolCursor = 0
 
 	ta := textarea.New()
 	ta.Placeholder = "System prompt específico del sub-agente…"
@@ -279,6 +380,41 @@ func (m *Model) buildAgentEditor() {
 	am.prompt = ta
 }
 
+// subAgentAvailableModels devuelve los modelos conocidos para el proveedor del subagente.
+func (m Model) subAgentAvailableModels() []string {
+	am := m.modal.agents
+	provKey := ""
+	if am.providerIndex > 0 && am.providerIndex < len(am.providers) {
+		provKey = am.providers[am.providerIndex]
+	}
+	if provKey == "" {
+		provKey = m.cfg.ActiveProvider
+	}
+
+	var list []string
+	seen := map[string]bool{}
+
+	if p, ok := m.cfg.Providers[provKey]; ok {
+		for _, mdl := range p.Models {
+			mdl = strings.TrimSpace(mdl)
+			if mdl != "" && !seen[mdl] {
+				list = append(list, mdl)
+				seen[mdl] = true
+			}
+		}
+	}
+
+	for _, mdl := range m.modelsCache.Models(provKey) {
+		mdl = strings.TrimSpace(mdl)
+		if mdl != "" && !seen[mdl] {
+			list = append(list, mdl)
+			seen[mdl] = true
+		}
+	}
+
+	return list
+}
+
 // focusAgentField enfoca el input del campo activo. Reajusta el tamaño del
 // textarea para que el footer de acciones nunca quede empujado fuera del modal.
 func (m *Model) focusAgentField() tea.Cmd {
@@ -288,7 +424,6 @@ func (m *Model) focusAgentField() tea.Cmd {
 	am.icon.Blur()
 	am.color.Blur()
 	am.model.Blur()
-	am.tools.Blur()
 	am.prompt.Blur()
 
 	switch am.field {
@@ -296,10 +431,11 @@ func (m *Model) focusAgentField() tea.Cmd {
 		return am.icon.Focus()
 	case agentFieldColor:
 		return am.color.Focus()
+	case agentFieldProvider, agentFieldTools:
+		// Selectores interactivos (flechas/espacio), no requieren focus de textinput
+		return nil
 	case agentFieldModel:
 		return am.model.Focus()
-	case agentFieldTools:
-		return am.tools.Focus()
 	case agentFieldPrompt:
 		return am.prompt.Focus()
 	default:
@@ -320,12 +456,38 @@ func (m Model) updateAgentEditor(msg tea.KeyMsg) (Model, tea.Cmd) {
 		am.err = ""
 		return m, nil
 	// Tab funciona en terminales nativas, pero VS Code lo intercepta para
-	// cambiar de panel. Por eso up/down también navegan entre campos.
-	//
-	// En el prompt multilínea ↑/↓ mueven el cursor; para salir se usa
-	// Ctrl+↑/Ctrl+↓ (o Tab). Así nunca se queda atascado sin llegar al footer
-	// de acciones.
-	case msg.String() == "tab", msg.String() == "ctrl+down":
+	// cambiar de panel. Por eso up/down y pgup/pgdown también navegan.
+	case msg.String() == "tab":
+		if am.field == agentFieldModel {
+			// Autocompletado inteligente de modelos
+			models := m.subAgentAvailableModels()
+			if len(models) > 0 {
+				val := strings.ToLower(strings.TrimSpace(am.model.Value()))
+				var matches []string
+				for _, mdl := range models {
+					if val == "" || strings.Contains(strings.ToLower(mdl), val) {
+						matches = append(matches, mdl)
+					}
+				}
+				if len(matches) > 0 {
+					current := am.model.Value()
+					idx := -1
+					for i, match := range matches {
+						if match == current {
+							idx = i
+							break
+						}
+					}
+					nextIdx := (idx + 1) % len(matches)
+					am.model.SetValue(matches[nextIdx])
+					am.model.CursorEnd()
+					return m, nil
+				}
+			}
+		}
+		am.field = (am.field + 1) % agentFieldCount
+		return m, m.focusAgentField()
+	case msg.String() == "ctrl+down":
 		am.field = (am.field + 1) % agentFieldCount
 		return m, m.focusAgentField()
 	case msg.String() == "shift+tab", msg.String() == "ctrl+up":
@@ -333,14 +495,21 @@ func (m Model) updateAgentEditor(msg tea.KeyMsg) (Model, tea.Cmd) {
 		return m, m.focusAgentField()
 	case msg.String() == "down":
 		if am.field == agentFieldPrompt {
-			// El cursor del textarea baja de línea; se sale con Tab/Ctrl+↓.
-			return m, nil
+			// En el prompt, la flecha hacia abajo mueve el cursor dentro del textarea.
+			// Para salir del campo se usa Tab, PgDn o Ctrl+↓.
+			var cmd tea.Cmd
+			am.prompt, cmd = am.prompt.Update(msg)
+			return m, cmd
 		}
 		am.field = (am.field + 1) % agentFieldCount
 		return m, m.focusAgentField()
 	case msg.String() == "up":
 		if am.field == agentFieldPrompt {
-			return m, nil
+			// En el prompt, la flecha hacia arriba mueve el cursor dentro del textarea.
+			// Para salir del campo se usa Shift+Tab, PgUp o Ctrl+↑.
+			var cmd tea.Cmd
+			am.prompt, cmd = am.prompt.Update(msg)
+			return m, cmd
 		}
 		am.field = (am.field + agentFieldCount - 1) % agentFieldCount
 		return m, m.focusAgentField()
@@ -354,6 +523,104 @@ func (m Model) updateAgentEditor(msg tea.KeyMsg) (Model, tea.Cmd) {
 		return m.saveAgentProfile()
 	case msg.String() == "ctrl+enter":
 		return m.saveAgentProfile()
+	case msg.String() == "ctrl+y":
+		text := strings.TrimSpace(am.prompt.Value())
+		if text == "" {
+			am.err = "El prompt está vacío."
+			return m, nil
+		}
+		if err := clipboard.Copy(text); err != nil {
+			am.err = "Error al copiar: " + err.Error()
+			return m, nil
+		}
+		am.err = ""
+		am.status = fmt.Sprintf("✓ Prompt copiado al portapapeles (%d caracteres)", len(text))
+		return m, nil
+	}
+
+	// Teclas específicas para selector de proveedor
+	if am.field == agentFieldProvider {
+		switch msg.String() {
+		case "left", "h":
+			if len(am.providers) > 0 {
+				am.providerIndex = (am.providerIndex - 1 + len(am.providers)) % len(am.providers)
+			}
+			return m, nil
+		case "right", "l", "space", "enter":
+			if len(am.providers) > 0 {
+				am.providerIndex = (am.providerIndex + 1) % len(am.providers)
+			}
+			return m, nil
+		}
+	}
+
+	// Teclas específicas para selección rápida de modelo con flechas izquierda/derecha
+	if am.field == agentFieldModel {
+		models := m.subAgentAvailableModels()
+		if len(models) > 0 {
+			switch msg.String() {
+			case "alt+left", "ctrl+left":
+				current := am.model.Value()
+				idx := indexOf(models, current)
+				if idx < 0 {
+					idx = len(models) - 1
+				} else {
+					idx = (idx - 1 + len(models)) % len(models)
+				}
+				am.model.SetValue(models[idx])
+				am.model.CursorEnd()
+				return m, nil
+			case "alt+right", "ctrl+right":
+				current := am.model.Value()
+				idx := indexOf(models, current)
+				if idx < 0 {
+					idx = 0
+				} else {
+					idx = (idx + 1) % len(models)
+				}
+				am.model.SetValue(models[idx])
+				am.model.CursorEnd()
+				return m, nil
+			case "enter":
+				// Enter en modelo avanza a tools
+				am.field = agentFieldTools
+				return m, m.focusAgentField()
+			}
+		}
+	}
+
+	// Teclas específicas para selector interactivo de tools
+	if am.field == agentFieldTools {
+		switch msg.String() {
+		case "left", "h":
+			if len(am.toolsList) > 0 {
+				am.toolCursor = (am.toolCursor - 1 + len(am.toolsList)) % len(am.toolsList)
+			}
+			return m, nil
+		case "right", "l":
+			if len(am.toolsList) > 0 {
+				am.toolCursor = (am.toolCursor + 1) % len(am.toolsList)
+			}
+			return m, nil
+		case " ", "space", "enter", "x":
+			if len(am.toolsList) > 0 && am.toolCursor < len(am.toolsList) {
+				t := am.toolsList[am.toolCursor]
+				am.toolsSelected[t] = !am.toolsSelected[t]
+			}
+			return m, nil
+		case "a":
+			allSelected := true
+			for _, t := range am.toolsList {
+				if !am.toolsSelected[t] {
+					allSelected = false
+					break
+				}
+			}
+			for _, t := range am.toolsList {
+				am.toolsSelected[t] = !allSelected
+			}
+			return m, nil
+		}
 	}
 
 	var cmd tea.Cmd
@@ -366,8 +633,6 @@ func (m Model) updateAgentEditor(msg tea.KeyMsg) (Model, tea.Cmd) {
 		am.color, cmd = am.color.Update(msg)
 	case agentFieldModel:
 		am.model, cmd = am.model.Update(msg)
-	case agentFieldTools:
-		am.tools, cmd = am.tools.Update(msg)
 	case agentFieldPrompt:
 		am.prompt, cmd = am.prompt.Update(msg)
 	}
@@ -381,9 +646,23 @@ func (m Model) saveAgentProfile() (Model, tea.Cmd) {
 	profile.Name = strings.TrimSpace(am.name.Value())
 	profile.Icon = strings.TrimSpace(am.icon.Value())
 	profile.Color = strings.TrimSpace(am.color.Value())
+	profile.Provider = ""
+	if am.providerIndex > 0 && am.providerIndex < len(am.providers) {
+		profile.Provider = am.providers[am.providerIndex]
+	}
 	profile.Model = strings.TrimSpace(am.model.Value())
 	profile.RolePrompt = strings.TrimSpace(am.prompt.Value())
-	profile.AllowedTools = splitTools(am.tools.Value())
+
+	var allowed []string
+	for _, t := range am.toolsList {
+		if am.toolsSelected[t] {
+			allowed = append(allowed, t)
+		}
+	}
+	if len(allowed) == 0 {
+		allowed = []string{"read_file", "list_dir", "search_code"}
+	}
+	profile.AllowedTools = allowed
 
 	// El ID se deriva del nombre al crear (o se reutiliza al editar).
 	if profile.ID == "" {
@@ -499,7 +778,9 @@ func (m Model) agentModalView() string {
 	b.WriteString(diffHintStyle.Render("[Space]"))
 	b.WriteString(textStyle.Render(" Activar/Desactivar  "))
 	b.WriteString(diffHintStyle.Render("[Enter]"))
-	b.WriteString(textStyle.Render(" Editar"))
+	b.WriteString(textStyle.Render(" Editar  "))
+	b.WriteString(diffHintStyle.Render("[Ctrl+Y / c]"))
+	b.WriteString(textStyle.Render(" Copiar Prompt"))
 	b.WriteString("\n")
 	b.WriteString(diffHintStyle.Render("[Ctrl+N]"))
 	b.WriteString(textStyle.Render(" Nuevo  "))
@@ -589,13 +870,55 @@ func (m Model) agentEditorView() string {
 	b.WriteString(agentFieldLabel("Color", am.field == agentFieldColor))
 	b.WriteString(am.color.View())
 	b.WriteString("\n")
+
+	// Proveedor con selector interactivo
+	provLabel := "(global)"
+	if am.providerIndex > 0 && am.providerIndex < len(am.providers) {
+		provKey := am.providers[am.providerIndex]
+		provLabel = config.DisplayName(provKey)
+	}
+	provSelector := fmt.Sprintf("◀ [ %s ] ▶", provLabel)
+	if am.field == agentFieldProvider {
+		provSelector = titleCyanStyle.Render(provSelector) + " " + mutedStyle.Render("◀/▶ cambiar")
+	}
+	b.WriteString(agentFieldLabel("Proveedor", am.field == agentFieldProvider))
+	b.WriteString(provSelector)
+	b.WriteString("\n")
+
+	// Modelo con autocompletado y catálogo dinámico
 	b.WriteString(agentFieldLabel("Modelo", am.field == agentFieldModel))
 	b.WriteString(am.model.View())
 	b.WriteString("\n")
+
+	// Modelos sugeridos o disponibles del proveedor
+	models := m.subAgentAvailableModels()
+	if len(models) > 0 {
+		filter := strings.ToLower(strings.TrimSpace(am.model.Value()))
+		var hints []string
+		count := 0
+		for _, mdl := range models {
+			if filter == "" || strings.Contains(strings.ToLower(mdl), filter) {
+				hints = append(hints, "["+mdl+"]")
+				count++
+				if count >= 3 {
+					break
+				}
+			}
+		}
+		if len(hints) > 0 {
+			hintLine := "  " + mutedStyle.Render("Disponibles: ") + titleCyanStyle.Render(strings.Join(hints, " "))
+			if am.field == agentFieldModel {
+				hintLine += " " + mutedStyle.Render("· Tab autocompleta · Alt+◀/▶ elige")
+			}
+			b.WriteString(hintLine + "\n")
+		}
+	} else {
+		b.WriteString("  " + mutedStyle.Render("(vacío = modelo global)") + "\n")
+	}
+
 	b.WriteString(agentFieldLabel("Tools", am.field == agentFieldTools))
-	b.WriteString(am.tools.View())
+	b.WriteString(am.toolsSelectorView(am.field == agentFieldTools))
 	b.WriteString("\n")
-	b.WriteString("  " + mutedStyle.Render("(vacío = todas · separadas por comas)") + "\n")
 	b.WriteString(agentFieldLabel("Prompt", am.field == agentFieldPrompt))
 	b.WriteString("\n")
 	b.WriteString(m.promptViewForEditor())
@@ -615,39 +938,61 @@ func (m Model) agentEditorView() string {
 	footer := make([]string, 0, 2)
 	footer = append(footer, "")
 	footer = append(footer, diffHintStyle.Render("[↑/↓ campo]")+" "+
-		diffHintStyle.Render("[Ctrl+↓]")+textStyle.Render(" salir del prompt  ")+
+		diffHintStyle.Render("[Ctrl+Y]")+textStyle.Render(" Copiar prompt  ")+
 		diffHintStyle.Render("[Ctrl+S]")+textStyle.Render(" Guardar  ")+
 		diffHintStyle.Render("[Esc]")+textStyle.Render(" Volver"))
 	return m.modalBoxWithFooter(b.String(), strings.Join(footer, "\n"))
 }
 
-// promptViewForEditor devuelve el textarea del prompt recortado a las líneas que
-// caben realmente en el modal, de modo que el footer de acciones quede visible.
-//
-// Se mide en dos pasadas: primero se arma el formulario con el prompt "lleno"
-// (sentinel de una línea) para saber cuánto ocupa el resto y después se le da al
-// prompt exactamente el hueco restante. No depende de constantes frágiles.
+// toolsSelectorView renderiza el selector interactivo de herramientas con badges [x]/[ ].
+func (am agentModal) toolsSelectorView(focused bool) string {
+	var row1, row2 []string
+	for i, t := range am.toolsList {
+		sel := am.toolsSelected[t]
+		box := "[ ]"
+		if sel {
+			box = "[x]"
+		}
+		item := box + " " + t
+		if focused && i == am.toolCursor {
+			item = titleCyanStyle.Render("❯" + item)
+		} else if sel {
+			item = successStyle.Render(" " + item)
+		} else {
+			item = mutedStyle.Render(" " + item)
+		}
+
+		if i < 4 {
+			row1 = append(row1, item)
+		} else {
+			row2 = append(row2, item)
+		}
+	}
+
+	res := strings.Join(row1, "  ")
+	if len(row2) > 0 {
+		res += "\n" + strings.Repeat(" ", 11) + strings.Join(row2, "  ")
+	}
+	if focused {
+		res += "\n" + strings.Repeat(" ", 11) + mutedStyle.Render("◀/▶ elegir · [Espacio/Enter] alternar · [a] todas")
+	}
+	return res
+}
+
+// promptViewForEditor devuelve el textarea del prompt con la altura que cabe
+// realmente en el modal, de modo que el footer de acciones quede visible.
 func (m Model) promptViewForEditor() string {
-	full := m.modal.agents.prompt.View()
-	lines := strings.Split(full, "\n")
-
-	// Altura ocupada por todo lo demás dentro del contenido del modal.
 	chrome := m.editorChromeHeight()
-
-	available := m.modalContentHeight() - chrome
+	available := m.modalContentHeight() - chrome - 1
 	if available < 3 {
 		available = 3
 	}
-	// Reservamos una línea de margen para que el footer nunca quede pegado.
-	available--
-	if len(lines) > available {
-		lines = lines[:available]
-	}
-	return strings.Join(lines, "\n")
+	m.modal.agents.prompt.SetHeight(available)
+	return m.modal.agents.prompt.View()
 }
 
 // editorChromeHeight calcula las líneas que ocupa el editor sin el cuerpo del
-// prompt: título, separador, los cinco campos (etiqueta + input), nota de tools,
+// prompt: título, separador, los campos (etiqueta + input o selector), nota de tools,
 // etiqueta Prompt y el footer con su línea en blanco.
 //
 // Se mide sobre el render real de los inputs para que funcione igual cuando un
@@ -658,9 +1003,10 @@ func (m Model) editorChromeHeight() int {
 	height += lipgloss.Height(agentFieldLabel("Nombre", false) + am.name.View())
 	height += lipgloss.Height(agentFieldLabel("Icono", false) + am.icon.View())
 	height += lipgloss.Height(agentFieldLabel("Color", false) + am.color.View())
+	height += lipgloss.Height(agentFieldLabel("Proveedor", false) + "◀ [ global ] ▶")
 	height += lipgloss.Height(agentFieldLabel("Modelo", false) + am.model.View())
-	height += lipgloss.Height(agentFieldLabel("Tools", false) + am.tools.View())
-	height++ // nota "(vacío = todas · separadas por comas)"
+	height++ // hint de modelos disponibles
+	height += lipgloss.Height(agentFieldLabel("Tools", am.field == agentFieldTools) + am.toolsSelectorView(am.field == agentFieldTools))
 	height += lipgloss.Height(agentFieldLabel("Prompt", false))
 	height += 2 // footer: línea en blanco + teclas
 	if am.err != "" {
@@ -684,11 +1030,14 @@ func (m *Model) resizeAgentModal() {
 	am.icon.Width = width
 	am.color.Width = width
 	am.model.Width = width
-	am.tools.Width = width
 	am.prompt.SetWidth(width)
-	// La altura efectiva la decide promptViewForEditor al renderizar; aquí se
-	// deja un valor amplio para conservar scroll interno del textarea.
-	am.prompt.SetHeight(max(3, m.modalContentHeight()))
+
+	chrome := m.editorChromeHeight()
+	available := m.modalContentHeight() - chrome - 1
+	if available < 3 {
+		available = 3
+	}
+	am.prompt.SetHeight(available)
 }
 
 // updateAgentModalMsg reenvía mensajes no-tecla a los campos del editor.
@@ -707,8 +1056,6 @@ func (m Model) updateAgentModalMsg(msg tea.Msg) (Model, tea.Cmd) {
 		am.color, cmd = am.color.Update(msg)
 	case agentFieldModel:
 		am.model, cmd = am.model.Update(msg)
-	case agentFieldTools:
-		am.tools, cmd = am.tools.Update(msg)
 	case agentFieldPrompt:
 		am.prompt, cmd = am.prompt.Update(msg)
 	}

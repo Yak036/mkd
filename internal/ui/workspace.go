@@ -720,6 +720,10 @@ func (m Model) needsOnboarding() bool {
 	if strings.TrimSpace(provider.BaseURL) == "" {
 		return true
 	}
+	// Si el proveedor ya cuenta con credenciales o sesión local válida (Codex, Claude, Antigravity, Ollama), no requiere onboarding.
+	if provider.Configured() {
+		return false
+	}
 	return strings.TrimSpace(provider.APIKey) == "" && !config.IsLocal(provider.BaseURL)
 }
 

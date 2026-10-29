@@ -23,6 +23,7 @@ import (
 
 	openai "github.com/sashabaranov/go-openai"
 
+	"github.com/Yak036/mkd/internal/antigravity"
 	"github.com/Yak036/mkd/internal/claude"
 	"github.com/Yak036/mkd/internal/codex"
 	"github.com/Yak036/mkd/internal/config"
@@ -101,7 +102,20 @@ func New(cfg config.Config) (*Client, error) {
 		}
 	}
 
-	// Si es proveedor Claude o apunta a api.anthropic.com
+	// Si es proveedor Antigravity (Google agy)
+	isAntigravity := cfg.ActiveProvider == "antigravity" || cfg.ActiveProvider == "agy" || config.IsAntigravity(provider.BaseURL)
+	if isAntigravity {
+		if local, err := antigravity.LoadLocalAuth(); err == nil {
+			if accountID == "" {
+				accountID = local.Account
+			}
+			provider.AccountID = accountID
+			if provider.BaseURL == "" {
+				provider.BaseURL = "local://agy"
+			}
+			cfg.Providers[cfg.ActiveProvider] = provider
+		}
+	}
 	isClaude := cfg.ActiveProvider == "claude" || config.IsClaude(provider.BaseURL)
 	if isClaude {
 		// Si no tiene credenciales en config, intenta importar desde archivos locales o variables
@@ -278,6 +292,11 @@ func (c *Client) ensureClaudeAuth(ctx context.Context) (string, error) {
 	return "", errors.New("no hay sesión activa de Claude: inicia sesión con `mkd auth claude` o importa con Ctrl+I en Ctrl+K")
 }
 
+// isAntigravity indica si el cliente utiliza el motor de Google Antigravity (agy).
+func (c *Client) isAntigravity() bool {
+	return c.ProviderKey == "antigravity" || c.ProviderKey == "agy" || config.IsAntigravity(c.BaseURL)
+}
+
 // Stream lanza la petición y devuelve un canal con la respuesta incremental.
 func (c *Client) Stream(ctx context.Context, system string, history []Message) (<-chan Chunk, error) {
 	return c.StreamMessages(ctx, c.messages(system, history))
@@ -332,6 +351,33 @@ func (c *Client) StreamMessages(ctx context.Context, messages []openai.ChatCompl
 		events, err := claude.StreamMessages(ctx, claude.Request{
 			BaseURL:      c.BaseURL,
 			AccessToken:  token,
+			Model:        c.Model,
+			SystemPrompt: c.SystemPrompt,
+			Messages:     messages,
+		})
+		if err != nil {
+			return nil, err
+		}
+		out := make(chan Chunk, 64)
+		go func() {
+			defer close(out)
+			for ev := range events {
+				if ev.Err != nil {
+					sendChunk(ctx, out, Chunk{Err: ev.Err})
+					return
+				}
+				if ev.DeltaContent != "" {
+					if !sendChunk(ctx, out, Chunk{Content: ev.DeltaContent}) {
+						return
+					}
+				}
+			}
+		}()
+		return out, nil
+	}
+
+	if c.isAntigravity() {
+		events, err := antigravity.StreamMessages(ctx, antigravity.Request{
 			Model:        c.Model,
 			SystemPrompt: c.SystemPrompt,
 			Messages:     messages,
@@ -451,6 +497,33 @@ func (c *Client) StreamWithTools(ctx context.Context, messages []openai.ChatComp
 			SystemPrompt: c.SystemPrompt,
 			Messages:     messages,
 			Tools:        tools,
+		})
+		if err != nil {
+			return nil, err
+		}
+		out := make(chan Chunk, 64)
+		go func() {
+			defer close(out)
+			for ev := range events {
+				if ev.Err != nil {
+					sendChunk(ctx, out, Chunk{Err: ev.Err})
+					return
+				}
+				if ev.DeltaContent != "" {
+					if !sendChunk(ctx, out, Chunk{Content: ev.DeltaContent}) {
+						return
+					}
+				}
+			}
+		}()
+		return out, nil
+	}
+
+	if c.isAntigravity() {
+		events, err := antigravity.StreamMessages(ctx, antigravity.Request{
+			Model:        c.Model,
+			SystemPrompt: c.SystemPrompt,
+			Messages:     messages,
 		})
 		if err != nil {
 			return nil, err
@@ -599,6 +672,30 @@ func (c *Client) CompleteMessagesTools(ctx context.Context, messages []openai.Ch
 		}, nil
 	}
 
+	if c.isAntigravity() {
+		events, err := antigravity.StreamMessages(ctx, antigravity.Request{
+			Model:        c.Model,
+			SystemPrompt: c.SystemPrompt,
+			Messages:     messages,
+		})
+		if err != nil {
+			return openai.ChatCompletionMessage{}, err
+		}
+		var content strings.Builder
+		for ev := range events {
+			if ev.Err != nil {
+				return openai.ChatCompletionMessage{}, ev.Err
+			}
+			if ev.DeltaContent != "" {
+				content.WriteString(ev.DeltaContent)
+			}
+		}
+		return openai.ChatCompletionMessage{
+			Role:    openai.ChatMessageRoleAssistant,
+			Content: content.String(),
+		}, nil
+	}
+
 	response, err := c.api.CreateChatCompletion(ctx, openai.ChatCompletionRequest{
 		Model:    c.Model,
 		Messages: SanitizeMessages(messages),
@@ -624,7 +721,7 @@ func (c *Client) CompleteMessages(ctx context.Context, messages []openai.ChatCom
 		return "", ErrNotConfigured
 	}
 
-	if c.isCodex() || c.isClaude() {
+	if c.isCodex() || c.isClaude() || c.isAntigravity() {
 		msg, err := c.CompleteMessagesTools(ctx, messages, nil)
 		if err != nil {
 			return "", err
@@ -736,6 +833,10 @@ func (c *Client) FetchAvailableModels(ctx context.Context) ([]string, error) {
 			return nil, err
 		}
 		return claude.FetchModels(ctx, c.BaseURL, token)
+	}
+
+	if c.isAntigravity() {
+		return antigravity.FetchModels(ctx)
 	}
 
 	if c.BaseURL == "" || (c.APIKey == "" && !config.IsLocal(c.BaseURL)) {

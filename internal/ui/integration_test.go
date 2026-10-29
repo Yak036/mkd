@@ -471,8 +471,8 @@ func TestAgentEditorFooterAlwaysVisible(t *testing.T) {
 			t.Fatalf("%dx%d: footer ausente al abrir", size.w, size.h)
 		}
 
-		// Bajar hasta el prompt (5 campos) y comprobar que sigue visible.
-		for i := 0; i < 5; i++ {
+		// Bajar hasta el prompt y comprobar que sigue visible.
+		for m.modal.agents.field != agentFieldPrompt {
 			next, _ = m.Update(tea.KeyMsg{Type: tea.KeyDown})
 			m = next.(Model)
 		}

@@ -15,6 +15,7 @@ import (
 	"github.com/charmbracelet/x/cellbuf"
 
 	"github.com/Yak036/mkd/internal/ai"
+	"github.com/Yak036/mkd/internal/antigravity"
 	"github.com/Yak036/mkd/internal/claude"
 	"github.com/Yak036/mkd/internal/codex"
 	"github.com/Yak036/mkd/internal/config"
@@ -218,11 +219,26 @@ func (m Model) updateProviderModal(msg tea.KeyMsg) (Model, tea.Cmd) {
 			m.cfg.Providers[key] = prov
 			p.apiKey.SetValue(bundle.AccessToken)
 			p.err = ""
-			p.testing = true
-			p.status = "Verificando conexión con Claude…"
 			m.notice = "✓ Credenciales de Claude importadas exitosamente"
 			_ = m.persistConfig()
-			return m, tea.Batch(testConnectionCmd(m.cfg, key), m.spinner.Tick)
+			return m, fetchModelsCmd(m.cfg, key)
+		}
+		if key == "antigravity" || key == "agy" {
+			info, err := antigravity.LoadLocalAuth()
+			if err != nil {
+				p.err = "no se pudo inicializar Antigravity: " + err.Error()
+				return m, nil
+			}
+			prov := m.cfg.Providers[key]
+			prov.AccountID = info.Account
+			prov.BaseURL = "local://agy"
+			m.cfg.Providers[key] = prov
+			p.baseURL.SetValue("local://agy")
+			p.apiKey.SetValue("(sesión local de agy)")
+			p.err = ""
+			m.notice = "✓ Cuenta de Antigravity vinculada (" + info.Account + ")"
+			_ = m.persistConfig()
+			return m, fetchModelsCmd(m.cfg, key)
 		}
 	case msg.String() == "ctrl+o":
 		key := ""
@@ -470,6 +486,16 @@ func (m Model) providerModalView() string {
 		b.WriteString("\n")
 	}
 
+	if key == "antigravity" || key == "agy" {
+		b.WriteString("\n")
+		if info, err := antigravity.LoadLocalAuth(); err == nil {
+			b.WriteString(successStyle.Render(fmt.Sprintf("✓ Sesión de Antigravity detectada (%s)", info.Account)))
+		} else {
+			b.WriteString(titleCyanStyle.Render("󰌆 Pulsa Ctrl+I para vincular la CLI agy de Google Antigravity"))
+		}
+		b.WriteString("\n")
+	}
+
 	if p.testing {
 		b.WriteString("\n")
 		b.WriteString(m.spinner.View())
@@ -495,6 +521,10 @@ func (m Model) providerModalView() string {
 	}
 	if key == "claude" {
 		b.WriteString(titleCyanStyle.Render("Ctrl+O login navegador · Ctrl+I importar sesión de Claude"))
+		b.WriteString("\n")
+	}
+	if key == "antigravity" || key == "agy" {
+		b.WriteString(titleCyanStyle.Render("Ctrl+I vincular cuenta local de Antigravity (agy)"))
 		b.WriteString("\n")
 	}
 	b.WriteString(mutedStyle.Render("Enter probar y conectar · Tab/↑↓ campo · ◀/▶ proveedor · Ctrl+U ver/ocultar key"))

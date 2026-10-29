@@ -6,6 +6,58 @@ Todas las modificaciones relevantes de MKD se documentan aquí.
 
 ### Añadido
 
+- **Soporte nativo para proveedor Google Antigravity (`agy`)**:
+  - Detección automática del binario `agy` (`~/.local/bin/agy`, `/usr/local/bin/agy`, `PATH`) y de la cuenta activa de Google desde `~/.gemini/google_accounts.json`.
+  - Nuevo comando CLI `mkd auth antigravity` (alias `mkd auth agy`):
+    - Conecta automáticamente la cuenta detectada (`ramcesvedes@gmail.com`).
+    - Sincroniza dinámicamente los 13 modelos disponibles (`gemini-3.8-flash-high/medium/low`, `gemini-4-argon-high/medium/low`, `claude-sonnet-5-5-*`, `claude-opus-5-5-*`, `gpt-oss-120b-medium`).
+    - Establece `antigravity` como proveedor activo si se desea.
+  - Nuevo paquete `internal/antigravity` (100% Go estándar, filosofía Ponytail sin librerías externas):
+    - Detección de binario y credenciales locales sin requerir ingresar API keys.
+    - Directriz balanceada de inferencia en `FormatPrompt` para evitar que el subproceso `agy` intente ejecutar herramientas locales de su propio runtime o falle por permisos de MCPs headless, preservando la compatibilidad de orquestación de MCPs nativos de MKD.
+    - Flag `--dangerously-skip-permissions` y fallback automático a `Result.Response` cuando no hay deltas de streaming intermedios.
+    - Notificación explícita de error si el proceso termina sin generar texto en lugar de descartar el turno silenciosamente en la TUI.
+    - Streaming incremental en tiempo real mediante subprocess IPC con `agy --output-format stream-json --disable-slash-commands`.
+    - Parser NDJSON de eventos `step_update` con fallback seguro de catálogo.
+  - Corrección en `needsOnboarding()` de la TUI (`internal/ui/workspace.go`):
+    - Permite arranque directo sin forzar modal de bienvenida cuando el proveedor activo ya cuenta con autenticación local válida (`provider.Configured() == true`), aplicando para Antigravity, Codex y Claude.
+  - Integración en TUI (`internal/ui/modals.go`):
+    - Tecla `Ctrl+I` en el modal de proveedor para vincular inmediatamente la sesión local de Antigravity.
+    - Soporte completo en `/connect`, selector de modelos (`Ctrl+K` / `/model`) y sub-agentes Swarm.
+
+- **Migración de Servidores MCP desde OpenCode y Antigravity**:
+  - Incorporados 6 servidores MCP estándar en `~/.config/mkd/config.json`:
+    - `filesystem` (14 tools): acceso a proyectos (`/home/ramces/Documentos/Proyectos`), cerebro (`/home/ramces/cerebro`) y home.
+    - `memoria` (9 tools): grafo de memoria y relaciones persistentes (`@modelcontextprotocol/server-memory`).
+    - `playwright` (24 tools): automatización completa de navegador con perfiles locales.
+    - `ui-design` (16 tools): servidor everything para prototipado e interfaces.
+    - `zai-mcp` (1 tool): scripts y utilidades de proyectos Zai.
+    - `web-search`: configurado (deshabilitado por ausencia de paquete en registry).
+  - Un total de 64 herramientas MCP activas accesibles interactivamente mediante el modal `/mcp` (`Ctrl+O`).
+
+- **Selector interactivo de herramientas (Tools) y corrección de edición de prompt en sub-agentes Swarm**:
+  - **Selector interactivo de Tools (`agentFieldTools`)**:
+    - Reemplazo completo del `textinput` manual por un selector interactivo tipo badges (`[x]`/`[ ]`) con las herramientas nativas y MCP (`read_file`, `list_dir`, `search_code`, `patch_file`, `write_file`, `run_command`, `mcp:*`).
+    - Navegación fluida con flechas horizontales (`◀/▶` o `h/l`) sobre las herramientas disponibles.
+    - Activación y desactivación instantánea con `Espacio`, `Enter` o `x`.
+    - Atajo `a` para alternar todas las herramientas (activar todas / desactivar todas).
+    - Persistencia automática en `AllowedTools` al guardar con `Ctrl+S`.
+  - **Corrección crítica de edición y navegación en el Prompt (`agentFieldPrompt`)**:
+    - Solucionado el bloqueo/congelamiento del modal al enfocar el campo de Prompt: las flechas `Up` y `Down` ahora se transmiten correctamente al componente `textarea` de Bubbles permitiendo navegar libremente entre líneas de texto sin que el modal se quede pegado.
+    - Sincronización dinámica de `SetHeight(available)` en el viewport del textarea para garantizar que el scroll interno mantenga el cursor y las líneas activas siempre visibles.
+    - Navegación bidireccional entre campos: `Tab`, `PgDn` o `Ctrl+↓` para avanzar al siguiente campo; `Shift+Tab`, `PgUp` o `Ctrl+↑` para retroceder al selector de herramientas; y flecha `Up` desde la primera línea para subir al campo anterior.
+
+- **Selector interactivo de proveedor, autocompletado y copia de prompt en sub-agentes Swarm**:
+  - En el editor de sub-agentes (`Ctrl+T` / `/agents`), el selector de `Proveedor` filtra de manera estricta y muestra **únicamente** proveedores con conexión exitosa (`Connected == true`) además de `(global)`.
+  - En el campo `Modelo` (`agentFieldModel`):
+    - Autocompletado inteligente con `Tab` basado en el catálogo del proveedor seleccionado.
+    - Ciclado directo de modelos conocidos con `Alt+◀/▶` o `Ctrl+◀/▶` sin tener que escribirlos manualmente.
+    - Muestra en tiempo real las sugerencias de modelos disponibles para el proveedor elegido.
+    - Persistencia integral de `Provider` y `Model` en `config.SubAgentProfile` y visualización en el panel de detalle del roster.
+  - **Copia rápida de prompt/descripción al portapapeles**:
+    - En el Roster (`Ctrl+T`), presionar `Ctrl+Y`, `Ctrl+C`, `c` o `y` copia inmediatamente el `RolePrompt` (prompt específico o descripción) del sub-agente seleccionado al portapapeles del sistema, con notificación en pantalla.
+    - En el Editor, presionar `Ctrl+Y` copia el contenido actual del prompt al portapapeles.
+
 - **Diferenciación estricta entre `/connect` y `/model` con verificación de conexión**:
   - `/connect` (`modalProvider`): Ahora actúa como el comando y modal dedicado a configurar, conectar y probar conectividad con el proveedor de IA.
     - Pulsar Enter ejecuta un test de conexión real (`testConnectionCmd`) contra la API del proveedor usando `FetchAvailableModels`.
